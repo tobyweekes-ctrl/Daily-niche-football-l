@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
-import { normalize, compact, levenshtein, buildIndex, matchAnswer } from '../js/match.js';
+import { normalize, compact, levenshtein, buildIndex, buildKnown, matchAnswer } from '../js/match.js';
 import { promptsForDate, dayIndex, puzzleNumber, EPOCH, PER_DAY, REPEAT_GAP, MAX_PER_GROUP } from '../js/daily.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -77,6 +77,38 @@ test('a typo in any answer never suggests a different answer', () => {
     });
   }
   assert.equal(wrong.length, 0, wrong.slice(0, 10).join('; '));
+});
+
+test('real names of the wrong kind are wrong, not suggestions or "not verified"', () => {
+  const known = buildKnown(prompts);
+  const ix = (id) => buildIndex(prompts.find((p) => p.id === id), known);
+  const check = (id, text, expected) => {
+    const r = matchAnswer(ix(id), text);
+    const got = r.status === 'match' || r.status === 'suggest' ? `${r.status}:${r.answer.name}` : r.wrongKind ? `wrong:${r.wrongKind}` : r.status;
+    assert.equal(got, expected, `${id}: "${text}"`);
+  };
+  check('european-final-venues', 'Arsenal', 'wrong:a club');          // was "Did you mean Amsterdam Arena?"
+  check('pl-stadiums', 'Arsenal', 'wrong:a club');                    // was Highbury via "Arsenal Stadium"
+  check('pl-stadiums', 'Everton', 'wrong:a club');
+  check('pl-stadiums', 'Tottenham Hotspur', 'wrong:a club');
+  check('pl-stadiums', 'Arsenal Stadium', 'match:Highbury');           // its real name still counts
+  check('pl-stadiums', 'Liberty', 'match:Liberty Stadium');
+  check('ucl-english-winners', 'Wembley', 'wrong:a stadium');
+  check('ucl-english-winners', 'Brazil', 'wrong:a country');
+  check('wc-winning-squads', 'Villa', 'match:David Villa');            // a surname that's also a club alias
+});
+test('no answer\'s spelling help comes from a short alias', () => {
+  const known = buildKnown(prompts);
+  for (const p of prompts) {
+    const index = buildIndex(p, known);
+    for (const other of prompts) {
+      if (other.answerType === p.answerType) continue;
+      for (const a of other.answers) {
+        const r = matchAnswer(index, a.name);
+        assert.notEqual(r.status, 'suggest', `${p.id}: "${a.name}" (${other.answerType}) suggested ${r.answer && r.answer.name}`);
+      }
+    }
+  }
 });
 
 // ------------------------------------------------------------- matching

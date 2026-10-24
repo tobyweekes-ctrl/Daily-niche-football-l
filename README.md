@@ -106,13 +106,14 @@ This fails if a prompt is missing a field, has an invalid tier, doesn't have exa
 2. Matching tries the **exact name** first, then **aliases**, then the **surname alone** (people only; "van Persie" and "Persie" both work). A higher level always wins.
 3. If several answers tie at the same level (for example "Neville" when the bank has Gary *and* Phil, or "Ronaldo" when it has both Ronaldos), the player is asked to **be more specific**. This doesn't use up their answer. In Infinite mode, answers already used are skipped first, so "Neville" after Gary resolves to Phil.
 4. **Misspellings are never marked wrong when it's clear who you meant.** The game shows "Did you mean **Martin Ødegaard**?", and you can tap the name or press Shoot again to confirm. It doesn't cost you your answer.
-   - **How many typos are allowed** depends on the length of what you type: 5–6 letters allow 1, 7–11 allow 2, and 12+ allow 3. Names of 4 letters or fewer must be exact. A swapped pair of letters ("Gerrrad", "Hnery") counts as one typo.
+   - **How many typos are allowed** depends on the *shorter* of the typed word and the name it's compared with: 5–6 letters allow 1, 7–11 allow 2, and 12+ allow 3. Names of 4 letters or fewer must be exact. So a short alias ("Arena") can't absorb a long wrong answer ("Arsenal"). A swapped pair of letters ("Gerrrad", "Hnery") counts as one typo.
    - **Only when it's clear:** a suggestion appears only when one answer is clearly closest. If two are close ("Nevlle": Gary or Phil?), you're asked to be more specific instead.
    - **On the buzzer:** if the clock runs out with a clear misspelling in the box, it counts.
    - **Tested:** a test drops a letter from every answer in the bank and checks that it never suggests a different answer.
    - **Optional words:** for stadiums and clubs, filler words are optional: "Liberty" = "Liberty Stadium", "Brugge" = "Club Brugge". Final venues also accept their city ("Istanbul"), and asks for more detail where a city has two ("Munich").
-5. In Infinite mode, an answer you've already given for that prompt is blocked with a message, and doesn't cost you a go.
-6. If nothing matches: on a `closedSet` prompt it's a miss. On an open prompt, anything of 3+ letters is **Not verified**. It scores 0 (giving points would let anyone type nonsense), shows as ❔ in the share grid, and is saved for review. You can find saved answers under **Stats → Copy for review**, or in the answer log if that's switched on.
+5. **Right name, wrong kind of thing:** the game knows every club, stadium, country and person in the whole bank. A club typed for a stadium prompt ("Arsenal" for Highbury), a stadium typed for a player ("Wembley"), or a country typed for a club is marked wrong, with a reason such as "“Arsenal” is a club, not a stadium". It's never suggested, and never scored "Not verified". A stadium's real name still counts even when it contains a club name ("Arsenal Stadium" = Highbury). Avoid aliases that are just "[club] Stadium" unless the ground really was called that.
+6. In Infinite mode, an answer you've already given for that prompt is blocked with a message, and doesn't cost you a go.
+7. If nothing matches: on a `closedSet` prompt it's a miss. On an open prompt, anything of 3+ letters is **Not verified**. It scores 0 (giving points would let anyone type nonsense), shows as ❔ in the share grid, and is saved for review. You can find saved answers under **Stats → Copy for review**, or in the answer log if that's switched on.
 
 Whatever is in the box when the daily clock hits zero is submitted "on the buzzer". It counts only if it's a clean match.
 
@@ -152,6 +153,14 @@ To tune it, edit `PLAYER_TYPES` in `js/rank.js`. Once the answer log has data, y
 
 The starter tiers are educated guesses. To base them on what players actually type, switch on the optional answer log: a Google Sheet with about 10 minutes of setup and no server to run. Then run `node tools/retier.mjs`, which suggests a tier for each answer from how often it was given, and lists the unverified answers worth adding. See [`backend/README.md`](backend/README.md).
 
+## Testing tools
+
+While `ALLOW_DAILY_REPLAY` is `true` in `js/config.js`, the daily results screen shows two extra buttons:
+- **Replay today** plays the same 7 prompts again.
+- **Try another set** deals 7 different prompts, chosen with the same variety rules.
+
+Replays never change your stats, since only the first completed game of a day counts. Set the flag to `false` before you share the game widely.
+
 ## What's saved (localStorage)
 
 Everything is saved under one key, `deepcut.v1`:
@@ -166,7 +175,22 @@ If storage is blocked (some private-browsing modes), the game still runs but for
 
 ## A note on the starter bank
 
-The 30 starter prompts (about 1,600 answers) were written from memory and are **all flagged `"needs fact-check"`**. The ones most likely to need correcting:
+There are 48 prompts (about 2,000 answers), and all are flagged `"needs fact-check"`. Most were written from memory. The 2025/26 and 2026 updates were checked against news reports in October 2026:
+- **2025/26 season:** Arsenal champions, Haaland Golden Boot, Coventry, Ipswich and Hull promoted, Bruno Fernandes PFA.
+- **Cups:** Man City won the FA Cup and the League Cup.
+- **European finals:** PSG won the Champions League (Havertz and Dembélé scored), Aston Villa the Europa League, and Crystal Palace the Conference League.
+- **World Cup 2026:** Spain won, and Ferran Torres scored the only goal of the final.
+- **Elsewhere:** Senegal won AFCON 2025, and Flamengo the 2025 Libertadores.
+
+Not yet updated, because sources conflicted or the event hadn't happened yet:
+- **England's 2026 World Cup scorers:** `england-wc-scorers` still ends at 2022.
+- **Spain's 2026 squad:** `wc-winning-squads` still ends at 2022.
+- **The 2026 Ballon d'Or:** the ceremony is on 26 October 2026.
+- **The 2026 FA Cup-winning manager.**
+
+The ones most likely to need correcting:
+- **`wc-2026-teams`:** I couldn't confirm the two intercontinental play-off winners. DR Congo and Iraq are listed, and the prompt is left open, so a correct team I've missed scores "Not verified" rather than wrong.
+- **`saudi-pro-league-signings`:** transfer details.
 
 - **Current data:** `efl-l1-l2-2025-26` (division membership) and `pl-100-club` (as of June 2025; Erling Haaland will have joined since).
 - **Squad edge cases:** `ucl-english-winners` (unused substitutes in finals), and fringe appearances in `title-seasons-blackburn-leicester`. `wc-winning-squads` now lists all seven full squads (1998–2022) and is marked as a closed set.

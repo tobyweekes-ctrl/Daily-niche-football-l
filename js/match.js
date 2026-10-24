@@ -79,7 +79,7 @@ export function surnameKeys(name) {
   return [...keys];
 }
 
-/** Typos allowed for a typed answer of this many letters. Short names must be exact. */
+/** Typos allowed when comparing words of this many letters. Short names must be exact. */
 export function maxTypos(length) {
   if (length <= 4) return 0;
   if (length <= 6) return 1;
@@ -88,16 +88,37 @@ export function maxTypos(length) {
 }
 
 /**
+ * Every name and alias in the whole bank by kind (club, stadium, person, …), so
+ * a prompt can tell "a real thing of the wrong kind" (a club typed for a stadium
+ * prompt, "Wembley" for a player) from an answer it simply doesn't list yet.
+ */
+export function buildKnown(prompts) {
+  const known = new Map();
+  for (const p of prompts) {
+    for (const a of p.answers) {
+      for (const s of [a.name, ...(a.aliases ?? [])]) {
+        const k = compact(s);
+        if (k.length < 4) continue; // acronyms like "SJP" are too collision-prone
+        if (!known.has(k)) known.set(k, new Set());
+        known.get(k).add(p.answerType);
+      }
+    }
+  }
+  return known;
+}
+
+/**
  * Pre-compute lookup tables for one prompt.
  * Priority: canonical name > alias > surname. Only ties within a level are ambiguous.
  */
-export function buildIndex(prompt) {
+export function buildIndex(prompt, known = new Map()) {
   const type = prompt.answerType;
   const isPerson = type === 'person';
   const levels = { name: new Map(), alias: new Map(), surname: new Map() };
   const keysByAnswer = prompt.answers.map(() => new Set());
   // Full spellings (filler words kept) for typo checks: "Liberty Stadim" vs "libertystadium".
   const fullByAnswer = prompt.answers.map((a) => new Set([a.name, ...(a.aliases ?? [])].map((s) => compact(s)).filter(Boolean)));
+  const fullKeys = new Set(fullByAnswer.flatMap((s) => [...s]));
   const add = (level, key, idx) => {
     if (!key) return;
     if (!levels[level].has(key)) levels[level].set(key, new Set());
@@ -113,7 +134,18 @@ export function buildIndex(prompt) {
       for (const key of keys) add('surname', key, idx);
     }
   });
-  return { prompt, type, levels, keysByAnswer, fullByAnswer };
+  return { prompt, type, levels, keysByAnswer, fullByAnswer, fullKeys, known };
+}
+
+const KIND_LABEL = { club: 'a club', stadium: 'a stadium', country: 'a country', person: 'a person' };
+
+/** If the text names something of another kind (and isn't one of this prompt's own spellings), say what it is. */
+function wrongKind(index, full) {
+  if (index.fullKeys.has(full)) return null;
+  const kinds = index.known.get(full);
+  if (!kinds || kinds.has(index.type)) return null;
+  const kind = ['club', 'stadium', 'country', 'person'].find((k) => kinds.has(k));
+  return kind ? KIND_LABEL[kind] : null;
 }
 
 /**
@@ -125,11 +157,12 @@ export function buildIndex(prompt) {
  *   { status: 'suggest', answer, index }             // clear misspelling: ask "did you mean…?"
  *   { status: 'ambiguous', candidates: [answer…] }   // don't consume the answer
  *   { status: 'duplicate', answer, index }           // don't consume the answer
- *   { status: 'miss' }
+ *   { status: 'miss', wrongKind? }                   // wrongKind: e.g. "a club" typed for a stadium
  */
 export function matchAnswer(index, input, used = new Set()) {
   const key = compact(input, index.type);
   if (!key) return { status: 'empty' };
+  const full = compact(input);
   const answers = index.prompt.answers;
 
   const resolve = (ids, via) => {
@@ -140,34 +173,47 @@ export function matchAnswer(index, input, used = new Set()) {
     return { status: 'duplicate', answer: answers[all[0]], index: all[0] };
   };
 
+  // Filler words are optional on stadium/club prompts, but a club's name must not
+  // turn into its stadium: "Arsenal" isn't "Arsenal Stadium".
+  if (index.type !== 'person') {
+    const kind = wrongKind(index, full);
+    if (kind) return { status: 'miss', wrongKind: kind };
+  }
+
   for (const level of ['name', 'alias', 'surname']) {
     const hit = index.levels[level].get(key);
     if (hit) return resolve(hit, level);
   }
 
-  // Spelling: find each unused answer's closest key. Suggest only when one
-  // answer is clearly closest, so we never guess between two players.
-  const full = compact(input);
-  const allowed = maxTypos(key.length);
-  const allowedFull = maxTypos(full.length);
-  if (!allowed && !allowedFull) return { status: 'miss' };
-  const scored = [];
+  const kind = wrongKind(index, full);
+  if (kind) return { status: 'miss', wrongKind: kind };
+
+  // Spelling: each comparison may have as many typos as the SHORTER of the two
+  // words allows, so a short alias ("Arena") can't swallow a long wrong answer
+  // ("Arsenal"). Suggest only when one answer is clearly closest.
+  const fits = [];
+  const near = new Map();
   index.keysByAnswer.forEach((keys, i) => {
     if (used.has(i)) return;
-    let best = Infinity;
-    for (const k of keys) best = Math.min(best, levenshtein(key, k, allowed + 1));
-    for (const k of index.fullByAnswer[i]) best = Math.min(best, levenshtein(full, k, allowedFull + 1));
-    if (best <= Math.max(allowed, allowedFull) + 1) scored.push([best, i]);
+    let fit = Infinity;
+    let close = Infinity;
+    const check = (typed, k) => {
+      const budget = maxTypos(Math.min(typed.length, k.length));
+      const d = levenshtein(typed, k, budget + 1);
+      if (d <= budget) fit = Math.min(fit, d);
+      if (d <= budget + 1) close = Math.min(close, d);
+    };
+    for (const k of keys) check(key, k);
+    for (const k of index.fullByAnswer[i]) check(full, k);
+    if (fit < Infinity) fits.push([fit, i]);
+    if (close < Infinity) near.set(i, close);
   });
-  // Typo budget comes from the text as typed, filler words included.
-  const budget = Math.max(allowed, allowedFull);
-  scored.sort((a, b) => a[0] - b[0]);
-  const [first, second] = scored;
-  if (!first || first[0] > budget || !budget) return { status: 'miss' };
+  if (!fits.length) return { status: 'miss' };
+  fits.sort((a, b) => a[0] - b[0]);
+  const [d1, best] = fits[0];
   // Clear = nobody else as close, and with 2+ typos nobody else within one more.
-  const margin = second ? second[0] - first[0] : Infinity;
-  if (margin >= (first[0] >= 2 ? 2 : 1)) return { status: 'suggest', answer: answers[first[1]], index: first[1] };
+  const rivals = [...near].filter(([i, d]) => i !== best && d <= d1 + (d1 >= 2 ? 1 : 0)).map(([i]) => i);
+  if (!rivals.length) return { status: 'suggest', answer: answers[best], index: best };
   // Close to more than one answer: ask for more rather than guess or mark wrong.
-  const near = scored.filter(([d]) => d <= first[0] + 1).map(([, i]) => answers[i]);
-  return { status: 'ambiguous', candidates: near };
+  return { status: 'ambiguous', candidates: [best, ...rivals].map((i) => answers[i]) };
 }

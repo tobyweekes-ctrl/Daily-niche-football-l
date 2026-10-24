@@ -1,7 +1,7 @@
-import { buildIndex, matchAnswer, compact } from './match.js';
+import { buildIndex, buildKnown, matchAnswer, compact } from './match.js';
 import { dateKey, dayIndex, puzzleNumber, promptsForDate } from './daily.js';
 import * as store from './storage.js';
-import { ANSWER_LOG_URL } from './config.js';
+import { ANSWER_LOG_URL, ALLOW_DAILY_REPLAY } from './config.js';
 import { LEVELS, levelIndex, climbPosition, percentile, scoreBuckets } from './rank.js';
 
 // ---------------------------------------------------------------- constants
@@ -30,10 +30,11 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const tierOf = (name) => TIER[name] || (name === UNVERIFIED.name ? UNVERIFIED : MISS);
 
 let bank = [];
+let known = new Map(); // every name in the bank by kind, to spot a club typed for a stadium etc.
 const byId = new Map();
 const indexes = new Map();
 const indexFor = (prompt) => {
-  if (!indexes.has(prompt.id)) indexes.set(prompt.id, buildIndex(prompt));
+  if (!indexes.has(prompt.id)) indexes.set(prompt.id, buildIndex(prompt, known));
   return indexes.get(prompt.id);
 };
 const hiddenGem = (prompt) => prompt.answers.find((a) => a.tier === 'Hidden Gem');
@@ -41,8 +42,16 @@ const hiddenGem = (prompt) => prompt.answers.find((a) => a.tier === 'Hidden Gem'
 // Open prompts can't list every correct answer, so an unknown answer there is
 // "not verified" (0 points, logged for review) rather than marked wrong.
 function settle(prompt, res, text) {
-  if (res.status === 'miss' && !prompt.closedSet && compact(text).length >= 3) return { status: 'unverified' };
+  if (res.status === 'miss' && !res.wrongKind && !prompt.closedSet && compact(text).length >= 3) return { status: 'unverified' };
   return res;
+}
+
+const KIND_OF_PROMPT = { club: 'a club', stadium: 'a stadium', country: 'a country', person: 'a person' };
+/** Why a miss missed, in words. */
+function missText(prompt, res, text) {
+  const t = `“${text.trim()}”`;
+  if (res.wrongKind) return `${t} is ${res.wrongKind}, not ${KIND_OF_PROMPT[prompt.answerType] || 'an answer here'}`;
+  return `${t} isn’t in our bank`;
 }
 
 /** Keep unverified answers for review and, if configured, send every answer to the log. */
@@ -292,11 +301,30 @@ function recordDaily(res, text) {
     showReveal({ tier, sub: `“${text.trim()}” isn’t on our list yet — logged for review`, extra: '+0' });
   } else {
     const label = res.status === 'timeout' ? (text.trim() ? 'Full time' : 'Time’s up') : res.status === 'pass' ? 'Passed' : 'Off target';
-    const sub = res.status === 'miss' ? `“${text.trim()}” isn’t in our bank` : 'No score this time';
+    const sub = res.status === 'miss' ? missText(prompt, res, text) : 'No score this time';
     showReveal({ tier: null, title: label, sub, extra: '+0' });
   }
   renderClock(0, DAILY_MS);
   revealTimer = setTimeout(advance, REVEAL_MS.daily + (promo ? 800 : 0));
+}
+
+/**
+ * Testing only (ALLOW_DAILY_REPLAY): play today's daily again, or a different
+ * set picked by the same variety rules for a random future date. Stats only
+ * ever count the first completed game of a date.
+ */
+function replayDaily(differentSet) {
+  const state = store.load();
+  const today = dateKey();
+  let ids = promptsForDate(bank, today);
+  if (differentSet) {
+    const d = new Date();
+    d.setDate(d.getDate() + 1 + Math.floor(Math.random() * 365));
+    ids = promptsForDate(bank, dateKey(d));
+  }
+  state.daily = { date: today, ids, index: 0, results: [], deadline: null, done: false, replay: true };
+  store.save();
+  startDaily();
 }
 
 function finishDaily() {
@@ -412,7 +440,14 @@ function showDailyResults() {
     <div class="btn-row">
       <button class="btn" type="button" data-go="home">Home</button>
       <button class="btn primary" type="button" data-go="infinite">Play Infinite</button>
-    </div>`;
+    </div>
+    ${ALLOW_DAILY_REPLAY ? `<div class="test-tools">
+      <p class="small muted">Testing tools (switch off in js/config.js). Replays don’t change your stats.</p>
+      <div class="btn-row">
+        <button class="btn ghost" type="button" data-go="replay-daily">Replay today</button>
+        <button class="btn ghost" type="button" data-go="random-daily">Try another set</button>
+      </div>
+    </div>` : ''}`;
   $('btn-share').addEventListener('click', () => share(shareText(d)));
   showScreen('results');
 }
@@ -530,7 +565,7 @@ function submitInfinite(text) {
     showReveal({ tier: t.name, title: res.answer.name, extra: `+${t.points} · +${t.bonus}s`, promo });
   } else {
     run.results.push({ id: prompt.id, input: text.trim(), name: null, tier: null, points: 0 });
-    showReveal({ tier: null, title: 'Off target', sub: `“${text.trim()}” isn’t in our bank`, extra: 'No time added' });
+    showReveal({ tier: null, title: 'Off target', sub: missText(prompt, settled, text), extra: 'No time added' });
   }
   run.pos += 1;
   store.save();
@@ -695,6 +730,7 @@ function wire() {
       if (where === 'home') showHome();
       if (where === 'infinite') startInfinite();
       if (where === 'infinite-new') startInfinite({ fresh: true });
+      if (where === 'replay-daily' || where === 'random-daily') replayDaily(where === 'random-daily');
     }
     if (e.target.closest('#btn-suggest') && game && game.suggestion) {
       $('answer').value = game.suggestion.name;
@@ -736,6 +772,7 @@ async function boot() {
     return;
   }
   for (const p of bank) byId.set(p.id, p);
+  known = buildKnown(bank);
   $('help-logging').hidden = !ANSWER_LOG_URL;
 
   const state = store.load();
