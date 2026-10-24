@@ -1,0 +1,139 @@
+# Deep Cut
+
+A daily football trivia game where **obvious answers score low and rare-but-correct answers score high**.
+
+- **Daily:** everyone gets the same 7 prompts each day, 25 seconds and one answer per prompt, max 700 points. Afterwards you get a spoiler-free emoji grid to share, plus each prompt's Hidden Gem.
+- **Infinite:** endless prompts on a single 45-second clock. Correct answers add time (+5s for a Tap-in, up to +15s for a Hidden Gem). You can't use the same answer twice in a run.
+
+It's plain HTML, CSS and JavaScript (ES modules). There's no build step, no backend and no accounts.
+
+## Running it
+
+Browsers won't let a page loaded from `file://` fetch `questions.json`, so serve the folder:
+
+```sh
+python3 -m http.server 8000
+# open http://localhost:8000
+```
+
+**GitHub Pages:** in the repo's **Settings → Pages**, choose *Deploy from a branch*, then `main` and `/ (root)`. The game will be at `https://tobyweekes-ctrl.github.io/daily-niche-football-l/`. All paths are relative, so any static host works too.
+
+## Files
+
+| Path | What it is |
+|---|---|
+| `index.html` | Markup, How-to-play and stats dialogs |
+| `css/style.css` | Floodlit-pitch theme (original artwork only, with no crests, logos or photos) |
+| `js/app.js` | Screens, timers, scoring, sharing |
+| `js/match.js` | Answer matching (normalising, aliases, surnames, typos) |
+| `js/daily.js` | Deterministic daily selection |
+| `js/storage.js` | localStorage persistence (stats, streaks, mid-game state) |
+| `questions.json` | The question bank |
+| `tests/test.mjs` | Validates the bank and tests matching and daily selection |
+
+## Adding a prompt
+
+Add an object to the `prompts` array in `questions.json`:
+
+```json
+{
+  "id": "ucl-final-scorers",
+  "prompt": "Name a player who has scored in a Champions League final (1993–2025, not shoot-outs)",
+  "category": "Champions League",
+  "asOf": "2025-06-01",
+  "answerType": "person",
+  "closedSet": true,
+  "_comment": "needs fact-check",
+  "answers": [
+    {"name": "Cristiano Ronaldo", "aliases": ["Ronaldo", "CR7", "Cristiano"], "tier": "Tap-in"},
+    {"name": "Vinícius Júnior", "aliases": ["Vinicius", "Vini Jr"], "tier": "Solid", "surname": false},
+    {"name": "Dmitri Alenichev", "tier": "Hidden Gem"}
+  ]
+}
+```
+
+| Field | Required | Meaning |
+|---|---|---|
+| `id` | yes | Unique and stable. **Don't rename ids once live:** the daily schedule and saved games refer to them. |
+| `prompt` | yes | The question as shown. Put any date range in the wording ("1993–2025") so a prompt stays true. |
+| `category` | yes | Short label shown on the card. |
+| `asOf` | yes | `YYYY-MM-DD` date the answers are correct to. Shown in the game as "Correct as of …". It matters most for prompts based on current data, such as this season's League One clubs. |
+| `answerType` | yes | `person`, `club`, `country`, `stadium` or `other`. Only `person` gets automatic surname-only matching. |
+| `closedSet` | no | `true` when the bank is meant to list **every** correct answer (e.g. all PL Golden Boot winners). Open prompts ("played for Real Madrid and an English club") will always miss some valid answers, so the tests warn when these have fewer than 50. |
+| `_comment` | no | Free text. Every starter prompt is marked `"needs fact-check"`. Change it to something like `"checked 2026-11-01"` once you've verified it. |
+| `answers` | yes | See below. |
+
+Each answer has:
+
+- `name`: the canonical name shown in reveals and results.
+- `tier`: one of `Tap-in`, `Solid`, `Good Shout`, `Proper Fan`, `Deep Cut`, `Hidden Gem`.
+- `aliases` (optional): other spellings and nicknames, e.g. `["Man Utd", "Man United", "MUFC"]`.
+- `surname` (optional, people only): `"Park"` replaces the automatic surname, which is useful for names like *Park Ji-sung*, where the last word isn't the surname. `false` turns surname-only matching off for that answer.
+
+### Assigning tiers
+
+| Tier | Points | Infinite bonus | Use for |
+|---|---|---|---|
+| Tap-in | 10 | +5s | The answer everyone gives first |
+| Solid | 25 | +7s | Common answers |
+| Good Shout | 40 | +9s | Less obvious |
+| Proper Fan | 60 | +11s | Uncommon: you need to really follow the game |
+| Deep Cut | 85 | +13s | Very obscure |
+| Hidden Gem | 100 | +15s | **Exactly one per prompt**, hand-picked as the rarest |
+
+Some rules of thumb:
+
+- Tier by **how often people would say it**, not by how good the player is. Pelé is a Tap-in; the 1930 scorer Pablo Dorado is the Hidden Gem.
+- Keep Tap-ins to a handful (3–7). If half the bank is Tap-in or Solid, the scoring loses its tension.
+- Pick a Hidden Gem that's rare but fair: once a player sees it on the results screen, they should think "of course!" rather than "who?".
+- A rough shape for a 50-answer bank is 5 Tap-in, 10 Solid, 15 Good Shout, 12 Proper Fan, 7 Deep Cut and 1 Hidden Gem.
+
+### Then run the checks
+
+```sh
+node tests/test.mjs
+```
+
+This fails if a prompt is missing a field, has an invalid tier, doesn't have exactly one Hidden Gem, has duplicate answers, or contains an answer that can't be matched by typing its own name. It warns if an alias is shadowed by another answer's name, or if an open prompt has fewer than 50 answers.
+
+## How answers are matched
+
+1. **Normalised:** comparisons ignore case, accents (Ødegaard = Odegaard), punctuation, hyphens, extra spaces, and the words "FC" and "The".
+2. Matching tries the **exact name** first, then **aliases**, then the **surname alone** (people only; "van Persie" and "Persie" both work). A higher level always wins.
+3. If several answers tie at the same level (for example "Neville" when the bank has Gary *and* Phil, or "Ronaldo" when it has both Ronaldos), the player is asked to **be more specific**. This doesn't use up their answer. In Infinite mode, answers already used are skipped first, so "Neville" after Gary resolves to Phil.
+4. **Typos:** if nothing matches exactly, any name, alias or surname of 7+ characters within Levenshtein distance 2 counts. A tie between different answers is treated as ambiguous.
+5. In Infinite mode, an answer you've already given for that prompt is blocked with a message, and doesn't cost you a go.
+
+Whatever is in the box when the daily clock hits zero is submitted "on the buzzer". It counts only if it's a clean match.
+
+## How the daily set is chosen
+
+`js/daily.js` picks prompts deterministically from the date, so every player gets the same set without a server:
+
+- Each prompt is ranked for a given day by a hash of `day|id`, so the order of `questions.json` doesn't matter.
+- The schedule replays every day since `EPOCH` (puzzle #1, 2026-10-24), and a prompt isn't picked again within **30 days**.
+- **With only 30 prompts that rule can't hold:** 30 days × 7 prompts needs at least 217 prompts. Until the bank reaches that size, the picker tops up each day with the least recently used prompts. With 30 prompts each one returns roughly every 4–5 days. Grow the bank and the 30-day gap takes over automatically.
+- The 7 prompts are shuffled into a seeded order for the day.
+- The puzzle flips at the player's local midnight.
+
+Editing `questions.json` changes the schedule from then on, for everyone loading the new file. A player who has already started today keeps the set they started with, because it's saved locally.
+
+## What's saved (localStorage)
+
+Everything is saved under one key, `deepcut.v1`:
+
+- streak, best streak, games played, average and best score, and score history by date
+- the day's in-progress game. The 25-second deadline is stored as a timestamp, so **refreshing doesn't pause the clock**.
+- an in-progress Infinite run. After a refresh it resumes **paused**, with the prompt hidden until you tap Resume.
+- whether you've seen How to play (shown automatically on your first visit)
+
+If storage is blocked (some private-browsing modes), the game still runs but forgets everything when the tab closes.
+
+## A note on the starter bank
+
+The 30 starter prompts (about 1,870 answers) were written from memory and are **all flagged `"needs fact-check"`**. The ones most likely to need correcting:
+
+- **Current data:** `efl-l1-l2-2025-26` (division membership) and `pl-100-club` (as of June 2025; Erling Haaland will have joined since).
+- **Squad and medal edge cases:** `pl-title-winners`, `ucl-english-winners` (unused substitutes and players who didn't qualify for a medal) and `wc-winning-squads`.
+- **"Whole career" claims:** `one-club-men`, where youth or amateur spells are easy to get wrong.
+- **Transfer histories:** `real-madrid-and-england` and `barcelona-and-england`, where a short loan can make or break an answer.
