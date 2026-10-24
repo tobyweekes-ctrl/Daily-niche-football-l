@@ -2,6 +2,7 @@ import { buildIndex, matchAnswer, compact } from './match.js';
 import { dateKey, dayIndex, puzzleNumber, promptsForDate } from './daily.js';
 import * as store from './storage.js';
 import { ANSWER_LOG_URL } from './config.js';
+import { LEVELS, levelIndex, climbPosition, percentile, scoreBuckets } from './rank.js';
 
 // ---------------------------------------------------------------- constants
 
@@ -111,6 +112,47 @@ function setFeedback(msg, kind = '') {
   el.dataset.kind = kind;
 }
 
+/** A clear misspelling: offer the answer we think they meant. Confirming submits it. */
+function offerSuggestion(res, text) {
+  game.suggestion = { text: text.trim(), name: res.answer.name };
+  const el = $('feedback');
+  el.dataset.kind = 'suggest';
+  el.innerHTML = `Did you mean <button type="button" class="suggest-btn" id="btn-suggest">${esc(res.answer.name)}</button>? Tap it or press Shoot again.`;
+}
+
+function clearSuggestion() {
+  if (game) game.suggestion = null;
+  if ($('feedback').dataset.kind) setFeedback('');
+}
+
+function ambiguousFeedback(text) {
+  setFeedback(`More than one answer could fit “${text.trim()}” — add a first name or check the spelling.`, 'warn');
+  shake();
+}
+
+/** Move the ball along the pyramid track; returns the promotion message, if any. */
+function renderClimb(score, before = score) {
+  const pos = climbPosition(score) * 100;
+  const i = levelIndex(score);
+  const ball = $('climb-ball');
+  ball.classList.toggle('rolling', score !== before);
+  ball.style.left = `${pos}%`;
+  ball.style.setProperty('--spin', `${Math.round(pos * 14)}deg`);
+  $('climb-fill').style.width = `${pos}%`;
+  $('climb-level').textContent = LEVELS[i].name;
+  const next = LEVELS[i + 1];
+  $('climb-next').textContent = next ? `${next.min - score} pts to ${next.name}` : 'Top of the game';
+  if (i > levelIndex(before)) {
+    const climb = $('climb');
+    climb.classList.remove('promoted');
+    void climb.offsetWidth;
+    climb.classList.add('promoted');
+    if (navigator.vibrate) navigator.vibrate(40);
+    return i === LEVELS.length - 1 ? `Ballon d'Or territory!` : `Promoted to ${LEVELS[i].name}!`;
+  }
+  return '';
+}
+
 function shake() {
   const card = $('answer-form');
   card.classList.remove('shake');
@@ -135,7 +177,7 @@ function renderPrompt(prompt) {
   $('prompt-card').classList.remove('revealed');
   $('prompt-card').classList.add('enter');
   setTimeout(() => $('prompt-card').classList.remove('enter'), 400);
-  setFeedback('');
+  clearSuggestion();
   const input = $('answer');
   input.value = '';
   input.disabled = false;
@@ -145,7 +187,10 @@ function renderPrompt(prompt) {
   input.focus({ preventScroll: true });
 }
 
-function showReveal({ tier, title, sub, extra }) {
+function showReveal({ tier, title, sub, extra, promo = '' }) {
+  clearSuggestion();
+  $('reveal-promo').textContent = promo ? `⬆ ${promo}` : '';
+  $('reveal-promo').hidden = !promo;
   const t = tierOf(tier);
   const badge = $('reveal-tier');
   badge.className = `tier-badge big ${t.cls}`;
@@ -194,7 +239,9 @@ function nextDailyPrompt() {
   game.prompt = prompt;
   game.phase = 'answer';
   $('sb-left').textContent = `${d.index + 1}/${d.ids.length}`;
-  $('sb-score').textContent = d.results.reduce((s, r) => s + r.points, 0);
+  const score = d.results.reduce((s, r) => s + r.points, 0);
+  $('sb-score').textContent = score;
+  renderClimb(score);
   renderPrompt(prompt);
   if (!d.deadline) { d.deadline = Date.now() + DAILY_MS; store.save(); }
   ticker = setInterval(tickDaily, 100);
@@ -207,9 +254,10 @@ function tickDaily() {
   const left = d.deadline - Date.now();
   renderClock(left, DAILY_MS);
   if (left <= 0) {
-    // On the buzzer: whatever is typed counts if it's a clean match.
+    // On the buzzer: whatever is typed counts if it clearly names an answer.
     const res = matchAnswer(indexFor(game.prompt), $('answer').value);
     if (res.status === 'match') recordDaily(res, $('answer').value);
+    else if (res.status === 'suggest') recordDaily({ ...res, status: 'match' }, $('answer').value);
     else recordDaily({ status: 'timeout' }, $('answer').value);
   }
 }
@@ -217,11 +265,8 @@ function tickDaily() {
 function submitDaily(text) {
   const res = matchAnswer(indexFor(game.prompt), text);
   if (res.status === 'empty') { shake(); return; }
-  if (res.status === 'ambiguous') {
-    setFeedback(`More than one answer fits “${text.trim()}” — be more specific.`, 'warn');
-    shake();
-    return;
-  }
+  if (res.status === 'ambiguous') { ambiguousFeedback(text); return; }
+  if (res.status === 'suggest') { offerSuggestion(res, text); return; }
   recordDaily(settle(game.prompt, res, text), text);
 }
 
@@ -233,14 +278,16 @@ function recordDaily(res, text) {
   const tier = matched ? res.answer.tier : res.status === 'unverified' ? UNVERIFIED.name : null;
   const points = matched ? tierOf(tier).points : 0;
   logAnswer('daily', d.date, prompt, res, text);
+  const before = d.results.reduce((s, r) => s + r.points, 0);
   d.results.push({ id: prompt.id, input: text.trim(), name: matched ? res.answer.name : null, tier, points });
   d.index += 1;
   d.deadline = null;
   store.save();
-  $('sb-score').textContent = d.results.reduce((s, r) => s + r.points, 0);
+  $('sb-score').textContent = before + points;
   game.phase = 'reveal';
+  const promo = renderClimb(before + points, before);
   if (matched) {
-    showReveal({ tier, title: res.answer.name, extra: `+${points}` });
+    showReveal({ tier, title: res.answer.name, extra: `+${points}`, promo });
   } else if (res.status === 'unverified') {
     showReveal({ tier, sub: `“${text.trim()}” isn’t on our list yet — logged for review`, extra: '+0' });
   } else {
@@ -249,7 +296,7 @@ function recordDaily(res, text) {
     showReveal({ tier: null, title: label, sub, extra: '+0' });
   }
   renderClock(0, DAILY_MS);
-  revealTimer = setTimeout(advance, REVEAL_MS.daily);
+  revealTimer = setTimeout(advance, REVEAL_MS.daily + (promo ? 800 : 0));
 }
 
 function finishDaily() {
@@ -270,7 +317,8 @@ function shareText(d) {
   const score = d.results.reduce((s, r) => s + r.points, 0);
   const row = d.results.map((r) => tierOf(r.tier).emoji).join('');
   const url = `${location.origin}${location.pathname}`;
-  return `Deep Cut #${puzzleNumber(d.date)} · ${score}/${MAX_DAILY}\n${row}\n${url}`;
+  const beat = Math.min(99, Math.floor(percentile(score) * 100));
+  return `Deep Cut #${puzzleNumber(d.date)} · ${score}/${MAX_DAILY}\n${row}\n⚽ ${LEVELS[levelIndex(score)].name} · better than ${beat}% of players\n${url}`;
 }
 
 async function share(text) {
@@ -305,6 +353,44 @@ function resultRows(results) {
   }).join('');
 }
 
+/** The pyramid, bottom to top, with the ball climbing to the level reached. */
+function ladderSection(score) {
+  const reached = levelIndex(score);
+  const rows = LEVELS.map((level, i) => {
+    const cls = i < reached ? 'reached' : i === reached ? 'reached here' : '';
+    const ball = i === reached ? '<span class="ladder-ball" aria-hidden="true"></span>' : '';
+    return `<li class="${cls}" style="--d:${(i * 0.22).toFixed(2)}s;--inset:${i * 9}px"><span>${esc(level.name)}</span><small>${level.min}+</small>${ball}</li>`;
+  }).reverse().join('');
+  return `<ol class="ladder" aria-label="You reached ${esc(LEVELS[reached].name)}" style="--end:${(reached * 0.22 + 0.3).toFixed(2)}s">${rows}</ol>`;
+}
+
+const pctText = (share) => (share > 0 && share < 0.005 ? '<1%' : `${Math.round(share * 100)}%`);
+
+/** Where this score sits against a modelled field of players (see js/rank.js). */
+function worldSection(score) {
+  const pct = percentile(score);
+  const beat = Math.min(99, Math.floor(pct * 100));
+  const top = Math.max(1, Math.ceil((1 - pct) * 100));
+  const buckets = scoreBuckets(50);
+  const max = Math.max(...buckets.map((b) => b.share));
+  const yours = buckets.findIndex((b) => score >= b.from && score <= b.to);
+  const bars = buckets.map((b, i) => {
+    const tip = `${b.from}–${b.to} pts · ${pctText(b.share)} of players${i === yours ? ' · you' : ''}`;
+    const edge = i < 2 ? ' left' : i > buckets.length - 3 ? ' right' : '';
+    return `<button type="button" class="bar${i === yours ? ' you' : ''}${edge}" data-tip="${tip}" aria-label="${tip}"><i style="height:${Math.max(2, (b.share / max) * 100)}%"></i></button>`;
+  }).join('');
+  const rows = buckets.map((b) => `<tr><td>${b.from}–${b.to}</td><td>${pctText(b.share)}</td></tr>`).join('');
+  return `
+    <h3 class="section-title">You vs the world</h3>
+    <div class="world">
+      <p class="world-head">${pct >= 0.5 ? `<b>Top ${top}%</b> better than ${beat}% of players` : `<b>Better than ${beat}%</b> of players`}</p>
+      <div class="hist" aria-hidden="false">${bars}</div>
+      <div class="hist-axis" aria-hidden="true"><span>0</span><span>350</span><span>700</span></div>
+      <table class="sr-only"><caption>Estimated share of players by score</caption><tr><th>Points</th><th>Players</th></tr>${rows}</table>
+      <p class="small muted">Estimated from a model of how casual, regular and expert players score — not live results.</p>
+    </div>`;
+}
+
 function showDailyResults() {
   stopTimers();
   const d = store.load().daily;
@@ -315,6 +401,9 @@ function showDailyResults() {
     <p class="eyebrow">Deep Cut #${puzzleNumber(d.date)} · Full time</p>
     <p class="big-score"><span>${score}</span><small>/${MAX_DAILY}</small></p>
     <p class="verdict">${verdict}${gems ? ` ${gems} Hidden Gem${gems > 1 ? 's' : ''}!` : ''}</p>
+    <p class="reached-line">You reached <b>${esc(LEVELS[levelIndex(score)].name)}</b></p>
+    ${ladderSection(score)}
+    ${worldSection(score)}
     <p class="emoji-row" aria-label="Your tiers">${d.results.map((r) => tierOf(r.tier).emoji).join('')}</p>
     <button class="btn primary wide" id="btn-share" type="button">Share result</button>
     <h3 class="section-title">The answers</h3>
@@ -371,6 +460,7 @@ function showInfinitePrompt({ paused = false } = {}) {
   game.phase = 'answer';
   $('sb-left').textContent = run.results.filter((r) => r.points > 0).length;
   $('sb-score').textContent = run.score;
+  renderClimb(run.score);
   renderPrompt(prompt);
   renderClock(run.remaining, INFINITE_MS);
   if (paused) { pauseInfinite(); return; }
@@ -413,11 +503,8 @@ function submitInfinite(text) {
   const used = new Set(run.used[prompt.id] || []);
   const res = matchAnswer(indexFor(prompt), text, used);
   if (res.status === 'empty') { shake(); return; }
-  if (res.status === 'ambiguous') {
-    setFeedback(`More than one answer fits “${text.trim()}” — be more specific.`, 'warn');
-    shake();
-    return;
-  }
+  if (res.status === 'ambiguous') { ambiguousFeedback(text); return; }
+  if (res.status === 'suggest') { offerSuggestion(res, text); return; }
   if (res.status === 'duplicate') {
     setFeedback(`You’ve already used ${res.answer.name} for this one — try another.`, 'warn');
     shake();
@@ -439,7 +526,8 @@ function submitInfinite(text) {
     run.remaining += t.bonus * 1000;
     run.used[prompt.id] = [...used, res.index];
     run.results.push({ id: prompt.id, input: text.trim(), name: res.answer.name, tier: t.name, points: t.points });
-    showReveal({ tier: t.name, title: res.answer.name, extra: `+${t.points} · +${t.bonus}s` });
+    const promo = renderClimb(run.score, run.score - t.points);
+    showReveal({ tier: t.name, title: res.answer.name, extra: `+${t.points} · +${t.bonus}s`, promo });
   } else {
     run.results.push({ id: prompt.id, input: text.trim(), name: null, tier: null, points: 0 });
     showReveal({ tier: null, title: 'Off target', sub: `“${text.trim()}” isn’t in our bank`, extra: 'No time added' });
@@ -483,6 +571,8 @@ function finishInfinite() {
       <button class="btn" type="button" data-go="home">Home</button>
       <button class="btn primary" type="button" data-go="infinite-new">Go again</button>
     </div>
+    <p class="reached-line">You reached <b>${esc(LEVELS[levelIndex(run.score)].name)}</b></p>
+    ${ladderSection(run.score)}
     <h3 class="section-title">Your run</h3>
     <ol class="result-list">${resultRows(run.results)}</ol>`;
   showScreen('results');
@@ -502,7 +592,9 @@ function onSubmit(e) {
   if (!game) return;
   if (game.phase === 'reveal') { advance(); return; }
   if (game.phase !== 'answer') return;
-  const text = $('answer').value;
+  let text = $('answer').value;
+  // Shoot again on the same text (or tap the name) accepts the suggestion.
+  if (game.suggestion && text.trim() === game.suggestion.text) text = game.suggestion.name;
   if (game.mode === 'daily') submitDaily(text);
   else submitInfinite(text);
 }
@@ -595,7 +687,7 @@ function wire() {
   });
   $('btn-help').addEventListener('click', openHelp);
   $('btn-stats').addEventListener('click', openStats);
-  $('answer').addEventListener('input', () => { if ($('feedback').dataset.kind === 'warn') setFeedback(''); });
+  $('answer').addEventListener('input', clearSuggestion);
   document.addEventListener('click', (e) => {
     const go = e.target.closest('[data-go]');
     if (go) {
@@ -603,6 +695,11 @@ function wire() {
       if (where === 'home') showHome();
       if (where === 'infinite') startInfinite();
       if (where === 'infinite-new') startInfinite({ fresh: true });
+    }
+    if (e.target.closest('#btn-suggest') && game && game.suggestion) {
+      $('answer').value = game.suggestion.name;
+      onSubmit(new Event('submit'));
+      return;
     }
     const close = e.target.closest('[data-close]');
     if (close) close.closest('dialog').close();

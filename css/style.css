@@ -324,3 +324,109 @@ body[data-screen="game"] .topbar { padding-top: calc(env(safe-area-inset-top) + 
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
 .prompt-card.revealed .prompt-text, .prompt-card.revealed .prompt-meta { visibility: hidden; }
+
+/* ---------- the climb: a ball rolling up the football pyramid ---------- */
+
+.climb {
+  display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px;
+  margin: -6px 0 12px; font: 600 11px/1 var(--body); letter-spacing: 0.06em; text-transform: uppercase;
+}
+.climb-level { color: var(--lime); font-family: var(--display); font-size: 13px; }
+.climb-next { color: var(--muted); }
+.climb-track {
+  position: relative; height: 6px; border-radius: 3px; margin-inline: 10px;
+  background:
+    repeating-linear-gradient(90deg, transparent 0 calc(12.5% - 1px), rgba(238,246,239,0.35) calc(12.5% - 1px) 12.5%),
+    rgba(238,246,239,0.08);
+}
+.climb-fill { position: absolute; inset: 0 auto 0 0; width: 0; border-radius: 3px; background: rgba(212, 255, 58, 0.45); }
+.football, .climb-ball, .ladder-ball {
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 50% 50%, #14201a 0 21%, transparent 22%),
+    radial-gradient(circle at 50% -4%, #14201a 0 15%, transparent 16%),
+    radial-gradient(circle at 104% 58%, #14201a 0 15%, transparent 16%),
+    radial-gradient(circle at -4% 58%, #14201a 0 15%, transparent 16%),
+    radial-gradient(circle at 24% 102%, #14201a 0 15%, transparent 16%),
+    radial-gradient(circle at 76% 102%, #14201a 0 15%, transparent 16%),
+    #f6f8f3;
+  box-shadow: 0 0 10px rgba(255, 255, 255, 0.45);
+}
+.climb-ball {
+  position: absolute; top: 50%; left: 0; width: 18px; height: 18px;
+  transform: translate(-50%, -50%) rotate(var(--spin, 0deg));
+}
+.climb-ball.rolling { transition: left 1.3s cubic-bezier(.22, .9, .3, 1.08), transform 1.3s cubic-bezier(.22, .9, .3, 1.08); }
+.climb-fill { transition: width 1.3s cubic-bezier(.22, .9, .3, 1.08); }
+.climb.promoted .climb-level { animation: promoted 1.2s ease 0.9s both; }
+@keyframes promoted {
+  0%, 100% { transform: none; text-shadow: none; }
+  30% { transform: scale(1.25); text-shadow: 0 0 14px rgba(212, 255, 58, 0.9); }
+}
+
+.reveal-promo {
+  margin: 6px 0 0; padding: 6px 12px; border-radius: 8px;
+  font: 700 16px/1.1 var(--display); letter-spacing: 0.06em; text-transform: uppercase; color: var(--lime-ink);
+  background: repeating-linear-gradient(115deg, var(--lime) 0 14px, #c3f02a 14px 28px);
+  background-size: 200% 100%;
+  animation: promo 0.5s cubic-bezier(.2, 1.5, .4, 1) 0.7s both, tape 1.2s linear 0.7s infinite;
+}
+.reveal-promo[hidden] { display: none; }
+@keyframes promo { from { opacity: 0; transform: translateY(10px) scale(0.8); } to { opacity: 1; transform: none; } }
+@keyframes tape { to { background-position: -56px 0; } }
+
+/* ---------- spelling suggestion ---------- */
+
+.feedback[data-kind="suggest"] { color: var(--chalk); }
+.suggest-btn {
+  border: 0; border-radius: 8px; padding: 5px 10px; margin: 0 2px; cursor: pointer;
+  background: var(--lime); color: var(--lime-ink); font: 700 15px/1.2 var(--body);
+}
+
+/* ---------- results: pyramid ladder ---------- */
+
+.reached-line { text-align: center; margin: 14px 0 4px; color: var(--chalk-dim); }
+.reached-line b { color: var(--lime); font-family: var(--display); font-size: 20px; letter-spacing: 0.04em; text-transform: uppercase; }
+.ladder { list-style: none; padding: 0; margin: 10px auto 4px; max-width: 380px; display: grid; gap: 4px; }
+.ladder li {
+  position: relative; display: flex; justify-content: space-between; align-items: center;
+  margin-inline: var(--inset, 0); padding: 8px 12px 8px 36px; border-radius: 10px;
+  background: rgba(238, 246, 239, 0.05); color: var(--muted);
+  font: 700 14px/1 var(--display); letter-spacing: 0.06em; text-transform: uppercase;
+}
+.ladder li small { font: 500 11px/1 var(--body); letter-spacing: 0; }
+.ladder li.reached { animation: rung 0.35s ease var(--d) forwards; }
+.ladder li.here { animation-name: rung-here; }
+@keyframes rung { to { background: rgba(212, 255, 58, 0.13); color: var(--chalk); } }
+@keyframes rung-here { to { background: var(--lime); color: var(--lime-ink); box-shadow: 0 0 22px rgba(212, 255, 58, 0.45); } }
+.ladder-ball {
+  position: absolute; left: 9px; top: 50%; width: 18px; height: 18px; margin-top: -9px;
+  animation: ball-in 0.7s cubic-bezier(.3, 1.5, .5, 1) var(--end, 1s) both;
+}
+
+@keyframes ball-in { from { opacity: 0; transform: translateY(-40px) rotate(-200deg); } to { opacity: 1; transform: none; } }
+
+/* ---------- results: you vs the world ---------- */
+
+.world { padding: 16px; border-radius: var(--radius); background: var(--glass); border: 1px solid var(--glass-edge); }
+.world-head { margin: 0; color: var(--chalk-dim); display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.world-head b { color: var(--lime); font: 700 26px/1 var(--display); letter-spacing: 0.02em; }
+.hist { display: grid; grid-template-columns: repeat(14, 1fr); gap: 2px; height: 110px; align-items: end; margin-top: 26px; }
+.bar { position: relative; height: 100%; display: flex; align-items: flex-end; padding: 0; border: 0; background: none; cursor: pointer; }
+.bar i { position: relative; display: block; width: 100%; border-radius: 4px 4px 0 0; background: rgba(238, 246, 239, 0.26); }
+.bar.you i { background: var(--lime); }
+.bar.you i::before {
+  content: 'You'; position: absolute; left: 50%; bottom: 100%; transform: translate(-50%, -4px);
+  font: 700 11px/1 var(--body); color: var(--lime); white-space: nowrap;
+}
+.bar:hover i { background: rgba(238, 246, 239, 0.45); }
+.bar.you:hover i { background: #e4ff7a; }
+.bar:hover::after, .bar:focus-visible::after {
+  content: attr(data-tip); position: absolute; bottom: calc(100% + 4px); left: 50%; transform: translateX(-50%); z-index: 2;
+  padding: 5px 8px; border-radius: 6px; white-space: nowrap;
+  background: var(--chalk); color: #06120b; font: 600 12px/1.2 var(--body);
+}
+.bar.left:hover::after, .bar.left:focus-visible::after { left: 0; transform: none; }
+.bar.right:hover::after, .bar.right:focus-visible::after { left: auto; right: 0; transform: none; }
+.bar:focus-visible { outline: 2px solid var(--lime); outline-offset: 2px; }
+.hist-axis { display: flex; justify-content: space-between; margin: 6px 0 10px; font-size: 11px; color: var(--muted); }

@@ -103,6 +103,11 @@
         </div>
       </div>
       <div class="timebar" aria-hidden="true"><span id="timebar-fill"></span></div>
+      <div class="climb" id="climb" aria-hidden="true">
+        <span class="climb-level" id="climb-level">Sunday League</span>
+        <div class="climb-track"><i class="climb-fill" id="climb-fill"></i><span class="climb-ball" id="climb-ball"></span></div>
+        <span class="climb-next" id="climb-next"></span>
+      </div>
 
       <article class="prompt-card" id="prompt-card">
         <p class="prompt-meta">
@@ -114,6 +119,7 @@
           <span id="reveal-tier" class="tier-badge big"></span>
           <p id="reveal-name" class="reveal-name"></p>
           <p id="reveal-points" class="reveal-points"></p>
+          <p id="reveal-promo" class="reveal-promo" hidden></p>
         </div>
         <div id="paused" class="paused" hidden>
           <p>Run paused. The prompt is hidden until the clock restarts.</p>
@@ -159,7 +165,8 @@
           <tr><td><span class="tier-badge t-gem">Hidden Gem</span></td><td>100</td><td>The single rarest answer</td></tr>
         </tbody>
       </table>
-      <p class="small">Spelling is forgiving: accents, capitals and small typos are fine, and a surname alone works if only one answer has it. If it’s ambiguous (“Neville”) you’ll be asked to be more specific — it won’t cost you your answer.</p>
+      <p class="small"><b>Climb the pyramid:</b> every point carries the ball up from Sunday League towards the Ballon d’Or. At full time you’ll see the level you reached and how your score compares with everyone else’s.</p>
+      <p class="small">Spelling is forgiving: accents and capitals don’t matter, a surname alone works if only one answer has it, and if you misspell a name you’ll be asked “Did you mean …?” — tap it to confirm. If it’s ambiguous (“Neville”) you’ll be asked to be more specific. Neither costs you your answer.</p>
       <p class="small"><b>Not verified:</b> some prompts have more correct answers than we can list. If yours isn’t on the list yet it shows as <span class="tier-badge t-unverified">Not verified</span> and scores 0 for now, but it isn’t marked wrong — it’s logged so good answers can be added.</p>
       <p class="small" id="help-logging" hidden>Answers you submit are recorded anonymously (the text you type, nothing about you) to set the tiers from what players actually say.</p>
       <p class="small"><b>Infinite mode:</b> one 45-second clock that runs while a prompt is on screen. Correct answers add time — +5s for a Tap-in up to +15s for a Hidden Gem. You can’t use the same answer twice.</p>

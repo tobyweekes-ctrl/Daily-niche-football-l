@@ -62,6 +62,23 @@ for (const p of prompts) {
   if (p.answers.length < 50 && !p.closedSet) warn(`${p.id}: ${p.answers.length} answers (aim for 50+)`);
 }
 
+test('a typo in any answer never suggests a different answer', () => {
+  const wrong = [];
+  for (const p of prompts) {
+    const index = buildIndex(p);
+    p.answers.forEach((a, i) => {
+      if (compact(a.name).length < 7) return;
+      for (const k of [1, Math.floor(a.name.length / 2), a.name.length - 2]) {
+        const typo = a.name.slice(0, k) + a.name.slice(k + 1);
+        const r = matchAnswer(index, typo);
+        if ((r.status === 'match' || r.status === 'suggest') && r.index !== i) wrong.push(`${p.id}: "${typo}" → ${r.answer.name}`);
+        if (r.status === 'miss') wrong.push(`${p.id}: "${typo}" → miss (should suggest ${a.name})`);
+      }
+    });
+  }
+  assert.equal(wrong.length, 0, wrong.slice(0, 10).join('; '));
+});
+
 // ------------------------------------------------------------- matching
 
 console.log('matching');
@@ -121,20 +138,38 @@ test('ambiguous surname asks for more', () => {
   assert.equal(matchAnswer(si, 'Ronaldo').status, 'ambiguous');
   assert.equal(name(matchAnswer(si, 'phil neville')), 'Phil Neville');
 });
-test('typos: distance ≤ 2 only for names over 6 characters', () => {
-  assert.equal(name(matchAnswer(si, 'Odegard')), 'Martin Ødegaard');
-  assert.equal(name(matchAnswer(si, 'Gary Nevile')), 'Gary Neville');
-  assert.equal(name(matchAnswer(si, 'Alexandr Arnld')), 'Trent Alexander-Arnold');
-  assert.equal(matchAnswer(si, 'Brwn').status, 'miss');       // short: exact only
-  assert.equal(matchAnswer(si, 'Odegxxxd').status, 'miss');    // distance 3
-  assert.equal(matchAnswer(si, 'Nevlle').status, 'miss');      // 6 chars: no fuzz
-  assert.equal(matchAnswer(si, 'Nevvile').status, 'ambiguous'); // fuzzy tie
+const suggested = (r) => (r.status === 'suggest' ? r.answer.name : r.status);
+test('misspellings suggest the answer instead of marking it wrong', () => {
+  assert.equal(suggested(matchAnswer(si, 'Odegard')), 'Martin Ødegaard');
+  assert.equal(suggested(matchAnswer(si, 'Gary Nevile')), 'Gary Neville');
+  assert.equal(suggested(matchAnswer(si, 'Alexandr Arnld')), 'Trent Alexander-Arnold');
+  assert.equal(suggested(matchAnswer(si, 'Robin van Perise')), 'Robin van Persie'); // swapped letters = 1 typo
+  assert.equal(suggested(matchAnswer(si, 'Knate')), "N'Golo Kanté");                // 5 letters: 1 typo allowed
+});
+test('suggestions only when it is clear who was meant', () => {
+  assert.equal(matchAnswer(si, 'Brwn').status, 'miss');        // 4 letters: must be exact
+  assert.equal(matchAnswer(si, 'Odegxxxd').status, 'miss');    // too far from anything
+  assert.equal(matchAnswer(si, 'Nevlle').status, 'ambiguous'); // Gary or Phil? ask, don't guess
+  assert.equal(matchAnswer(si, 'Nevvile').status, 'ambiguous');
+  assert.equal(matchAnswer(si, 'Lionel Messi').status, 'miss');
+});
+test('suggestions skip answers already used', () => {
+  const gary = si.prompt.answers.findIndex((a) => a.name === 'Gary Neville');
+  assert.equal(suggested(matchAnswer(si, 'Nevlle', new Set([gary]))), 'Phil Neville');
+});
+test('stadium and club filler words are optional', () => {
+  const st = buildIndex({ id: 's', answerType: 'stadium', answers: [{ name: 'Liberty Stadium', tier: 'Solid' }, { name: 'Stadium of Light', tier: 'Solid' }] });
+  assert.equal(name(matchAnswer(st, 'liberty')), 'Liberty Stadium');
+  assert.equal(name(matchAnswer(st, 'Stadium of Light')), 'Stadium of Light');
+  const cl = buildIndex({ id: 'c2', answerType: 'club', answers: [{ name: 'Club Brugge', tier: 'Solid' }] });
+  assert.equal(name(matchAnswer(cl, 'Brugge')), 'Club Brugge');
 });
 test('duplicates blocked, ambiguity resolved by what is left', () => {
   const gary = si.prompt.answers.findIndex((a) => a.name === 'Gary Neville');
   assert.equal(matchAnswer(si, 'Gary Neville', new Set([gary])).status, 'duplicate');
   assert.equal(name(matchAnswer(si, 'Neville', new Set([gary]))), 'Phil Neville');
 });
+
 test('empty and wrong input', () => {
   assert.equal(matchAnswer(si, '   ').status, 'empty');
   assert.equal(matchAnswer(si, 'Lionel Messi').status, 'miss');

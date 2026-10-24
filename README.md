@@ -2,7 +2,7 @@
 
 A daily football trivia game where **obvious answers score low and rare-but-correct answers score high**.
 
-- **Daily:** everyone gets the same 7 prompts each day, 25 seconds and one answer per prompt, max 700 points. Afterwards you get a spoiler-free emoji grid to share, plus each prompt's Hidden Gem.
+- **Daily:** everyone gets the same 7 prompts each day, 25 seconds and one answer per prompt, max 700 points. Every point rolls a ball up the football pyramid, from Sunday League to the Ballon d'Or, with a promotion banner each time you go up a level. At full time you see the level you reached, how your score compares with everyone else's, each prompt's Hidden Gem, and a spoiler-free emoji grid to share.
 - **Infinite:** endless prompts on a single 45-second clock. Correct answers add time (+5s for a Tap-in, up to +15s for a Hidden Gem). You can't use the same answer twice in a run.
 
 It's plain HTML, CSS and JavaScript (ES modules). There's no build step, no backend and no accounts.
@@ -27,6 +27,7 @@ python3 -m http.server 8000
 | `js/app.js` | Screens, timers, scoring, sharing |
 | `js/match.js` | Answer matching (normalising, aliases, surnames, typos) |
 | `js/daily.js` | Deterministic daily selection |
+| `js/rank.js` | Pyramid levels and the score model behind "You vs the world" |
 | `js/storage.js` | localStorage persistence (stats, streaks, mid-game state, unverified answers) |
 | `js/config.js` | Optional answer-log URL (empty by default, so nothing leaves the device) |
 | `backend/` | Free Google Sheets answer log and setup guide |
@@ -104,7 +105,12 @@ This fails if a prompt is missing a field, has an invalid tier, doesn't have exa
 1. **Normalised:** comparisons ignore case, accents (Ødegaard = Odegaard), punctuation, hyphens, extra spaces, and the words "FC" and "The".
 2. Matching tries the **exact name** first, then **aliases**, then the **surname alone** (people only; "van Persie" and "Persie" both work). A higher level always wins.
 3. If several answers tie at the same level (for example "Neville" when the bank has Gary *and* Phil, or "Ronaldo" when it has both Ronaldos), the player is asked to **be more specific**. This doesn't use up their answer. In Infinite mode, answers already used are skipped first, so "Neville" after Gary resolves to Phil.
-4. **Typos:** if nothing matches exactly, any name, alias or surname of 7+ characters within Levenshtein distance 2 counts. A tie between different answers is treated as ambiguous.
+4. **Misspellings are never marked wrong when it's clear who you meant.** The game shows "Did you mean **Martin Ødegaard**?", and you can tap the name or press Shoot again to confirm. It doesn't cost you your answer.
+   - **How many typos are allowed** depends on the length of what you type: 5–6 letters allow 1, 7–11 allow 2, and 12+ allow 3. Names of 4 letters or fewer must be exact. A swapped pair of letters ("Gerrrad", "Hnery") counts as one typo.
+   - **Only when it's clear:** a suggestion appears only when one answer is clearly closest. If two are close ("Nevlle": Gary or Phil?), you're asked to be more specific instead.
+   - **On the buzzer:** if the clock runs out with a clear misspelling in the box, it counts.
+   - **Tested:** a test drops a letter from every answer in the bank and checks that it never suggests a different answer.
+   - **Optional words:** for stadiums and clubs, filler words are optional: "Liberty" = "Liberty Stadium", "Brugge" = "Club Brugge". Final venues also accept their city ("Istanbul"), and asks for more detail where a city has two ("Munich").
 5. In Infinite mode, an answer you've already given for that prompt is blocked with a message, and doesn't cost you a go.
 6. If nothing matches: on a `closedSet` prompt it's a miss. On an open prompt, anything of 3+ letters is **Not verified**. It scores 0 (giving points would let anyone type nonsense), shows as ❔ in the share grid, and is saved for review. You can find saved answers under **Stats → Copy for review**, or in the answer log if that's switched on.
 
@@ -122,6 +128,25 @@ Whatever is in the box when the daily clock hits zero is submitted "on the buzze
 - The puzzle flips at the player's local midnight.
 
 Editing `questions.json` changes the schedule from then on, for everyone loading the new file. A player who has already started today keeps the set they started with, because it's saved locally.
+
+## The pyramid and "You vs the world"
+
+These are set in `js/rank.js`:
+
+| Level | Points | Roughly reached by |
+|---|---|---|
+| Sunday League | 0+ | everyone |
+| Non-League | 50+ | 90% |
+| League Two | 100+ | 66% |
+| League One | 150+ | 44% |
+| Championship | 200+ | 28% |
+| Premier League | 270+ | top 13% |
+| Champions League | 350+ | top 4% |
+| Ballon d'Or | 450+ | top 0.4% |
+
+There are no live results to compare against, so the percentile comes from a **probability model**. Players are a mix of casual (40%), regular (40%) and expert (20%). Each type has its own chance of a miss, a Tap-in and so on, up to a Hidden Gem, on every prompt. The game works out the exact spread of 7-prompt totals for that mix. The results screen shows "Top X%", plus a chart of the spread with your score marked; tap a bar for its numbers.
+
+To tune it, edit `PLAYER_TYPES` in `js/rank.js`. Once the answer log has data, you can measure these shares instead of guessing them. If you move the level thresholds, the "reached by" column is easy to recompute with `percentile()`.
 
 ## Setting tiers from real data
 
@@ -144,7 +169,7 @@ If storage is blocked (some private-browsing modes), the game still runs but for
 The 30 starter prompts (about 1,600 answers) were written from memory and are **all flagged `"needs fact-check"`**. The ones most likely to need correcting:
 
 - **Current data:** `efl-l1-l2-2025-26` (division membership) and `pl-100-club` (as of June 2025; Erling Haaland will have joined since).
-- **Squad edge cases:** `ucl-english-winners` (unused substitutes) and `wc-winning-squads`, and fringe appearances in `title-seasons-blackburn-leicester`.
+- **Squad edge cases:** `ucl-english-winners` (unused substitutes in finals), and fringe appearances in `title-seasons-blackburn-leicester`. `wc-winning-squads` now lists all seven full squads (1998–2022) and is marked as a closed set.
 - **Caretaker managers:** `big-club-managers`.
 - **"Whole career" claims:** `one-club-men`, where youth or amateur spells are easy to get wrong.
 - **Transfer histories:** `real-madrid-and-england` and `barcelona-and-england`, where a short loan can make or break an answer.
