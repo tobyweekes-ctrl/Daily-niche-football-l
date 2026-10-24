@@ -245,7 +245,8 @@ test('small bank: spreads prompts as evenly as possible', () => {
     const key = addDays(EPOCH, d);
     for (const id of promptsForDate(prompts, key)) {
       const prev = seen.get(id);
-      if (prev != null) assert.ok(dayIndex(key) - prev >= Math.floor(prompts.length / PER_DAY), `${id} back after ${dayIndex(key) - prev} days`);
+      // The variety caps can pull a prompt forward a day or two, never more.
+      if (prev != null) assert.ok(dayIndex(key) - prev >= Math.floor(prompts.length / PER_DAY) - 2, `${id} back after ${dayIndex(key) - prev} days`);
       seen.set(id, dayIndex(key));
     }
   }

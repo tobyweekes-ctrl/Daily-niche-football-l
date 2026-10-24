@@ -130,6 +130,23 @@ Whatever is in the box when the daily clock hits zero is submitted "on the buzze
 
 Editing `questions.json` changes the schedule from then on, for everyone loading the new file. A player who has already started today keeps the set they started with, because it's saved locally.
 
+## The answer animation
+
+Every answer plays a short shot on a mini pitch (`js/shot.js`), and the rarer the answer, the further out it's struck from:
+
+| Tier | Shot |
+|---|---|
+| Tap-in | 6 yards: tapped in |
+| Solid | 12 yards: from the spot |
+| Good Shout | 18 yards: edge of the box |
+| Proper Fan | 25-yard rocket |
+| Deep Cut | 35-yard screamer |
+| Hidden Gem | from the halfway line |
+
+The ball rolls back up the pitch while the yardage ticks up, like a depth meter. Then it's struck into the top corner: the net bulges, "GOAL!" flashes, the points count up and the pyramid ball moves. A wrong answer goes over the bar, and an answer that's not verified goes to a "VAR" check.
+
+Tap the card once to skip the animation, and tap again to move on. If the device is set to reduce motion, it shows the result straight away.
+
 ## The pyramid and "You vs the world"
 
 These are set in `js/rank.js`:
@@ -175,7 +192,7 @@ If storage is blocked (some private-browsing modes), the game still runs but for
 
 ## A note on the starter bank
 
-There are 48 prompts (about 2,000 answers), and all are flagged `"needs fact-check"`. Most were written from memory. The 2025/26 and 2026 updates were checked against news reports in October 2026:
+There are 57 prompts (about 2,200 answers), and all are flagged `"needs fact-check"`. Most were written from memory. The 2025/26 and 2026 updates were checked against news reports in October 2026:
 - **2025/26 season:** Arsenal champions, Haaland Golden Boot, Coventry, Ipswich and Hull promoted, Bruno Fernandes PFA.
 - **Cups:** Man City won the FA Cup and the League Cup.
 - **European finals:** PSG won the Champions League (Havertz and Dembélé scored), Aston Villa the Europa League, and Crystal Palace the Conference League.

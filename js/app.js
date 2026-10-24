@@ -3,6 +3,7 @@ import { dateKey, dayIndex, puzzleNumber, promptsForDate } from './daily.js';
 import * as store from './storage.js';
 import { ANSWER_LOG_URL, ALLOW_DAILY_REPLAY } from './config.js';
 import { LEVELS, levelIndex, climbPosition, percentile, scoreBuckets } from './rank.js';
+import { SHOTS, playShot } from './shot.js';
 
 // ---------------------------------------------------------------- constants
 
@@ -21,7 +22,7 @@ const UNVERIFIED = { name: 'Not verified', points: 0, bonus: 0, emoji: '❔', cl
 const DAILY_MS = 25_000;
 const INFINITE_MS = 45_000;
 const MAX_DAILY = 700;
-const REVEAL_MS = { daily: 2200, infinite: 1400 };
+const REVEAL_MS = { daily: 3600, infinite: 2800 };
 
 // ---------------------------------------------------------------- helpers
 
@@ -139,7 +140,14 @@ function ambiguousFeedback(text) {
   shake();
 }
 
-/** Move the ball along the pyramid track; returns the promotion message, if any. */
+/** Promotion message when a score crosses into a new level. */
+function promoFor(before, after) {
+  const i = levelIndex(after);
+  if (i <= levelIndex(before)) return '';
+  return i === LEVELS.length - 1 ? `Ballon d'Or territory!` : `Promoted to ${LEVELS[i].name}!`;
+}
+
+/** Move the ball along the pyramid track (flashing the level name on promotion). */
 function renderClimb(score, before = score) {
   const pos = climbPosition(score) * 100;
   const i = levelIndex(score);
@@ -156,10 +164,7 @@ function renderClimb(score, before = score) {
     climb.classList.remove('promoted');
     void climb.offsetWidth;
     climb.classList.add('promoted');
-    if (navigator.vibrate) navigator.vibrate(40);
-    return i === LEVELS.length - 1 ? `Ballon d'Or territory!` : `Promoted to ${LEVELS[i].name}!`;
   }
-  return '';
 }
 
 function shake() {
@@ -196,20 +201,69 @@ function renderPrompt(prompt) {
   input.focus({ preventScroll: true });
 }
 
-function showReveal({ tier, title, sub, extra, promo = '' }) {
+let revealToken = 0;
+let skipShot = null;
+
+/** Count "+85" (or "+85 · +13s") up from zero. */
+function countUp(el, text) {
+  const m = /^\+(\d+)/.exec(text || '');
+  if (!m || matchMedia('(prefers-reduced-motion: reduce)').matches) { el.textContent = text || ''; return; }
+  const target = Number(m[1]);
+  const rest = text.slice(m[0].length);
+  const t0 = performance.now();
+  const step = (now) => {
+    const p = Math.min(1, (now - t0) / 450);
+    el.textContent = `+${Math.round(target * p)}${rest}`;
+    if (p < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+
+const SHOT_LINE = { miss: 'Over the bar!', var: 'VAR check: not on our list yet' };
+
+/**
+ * Show the result of an answer. `kind` picks the shot: 'goal' (correct),
+ * 'miss' (wrong), 'var' (not verified) or 'none' (passed / out of time).
+ * The text lands when the ball does; `onImpact` runs at the same moment.
+ */
+function showReveal({ tier, title, sub, extra, promo = '', kind = 'none', onImpact }) {
   clearSuggestion();
-  $('reveal-promo').textContent = promo ? `⬆ ${promo}` : '';
-  $('reveal-promo').hidden = !promo;
+  const token = ++revealToken;
   const t = tierOf(tier);
   const badge = $('reveal-tier');
   badge.className = `tier-badge big ${t.cls}`;
   badge.textContent = t === MISS ? (title || 'Miss') : t.name;
   $('reveal-name').textContent = t === MISS || t === UNVERIFIED ? (sub || '') : title;
-  $('reveal-points').textContent = extra || '';
+  const shot = SHOTS[t.name];
+  $('reveal-line').textContent = kind === 'goal' && shot ? shot.line : SHOT_LINE[kind] || '';
+  $('reveal-points').textContent = '';
+  $('reveal-promo').textContent = promo ? `⬆ ${promo}` : '';
+  $('reveal-promo').hidden = !promo;
+  const text = $('reveal-text');
+  text.classList.remove('landed');
+  text.classList.add('pending');
+  $('shot').dataset.kind = kind;
   $('reveal').hidden = false;
   $('prompt-card').classList.add('revealed');
   $('btn-submit').textContent = 'Next ›';
   $('btn-pass').disabled = true;
+  if (game) game.revealReady = false;
+  skipShot = playShot(
+    { ball: $('shot-ball'), net: $('shot-net'), meter: $('shot-meter'), panel: $('shot') },
+    {
+      kind,
+      yards: shot ? shot.yards : 18,
+      onImpact: () => {
+        if (token !== revealToken) return;
+        text.classList.remove('pending');
+        text.classList.add('landed');
+        countUp($('reveal-points'), extra);
+        if (game) game.revealReady = true;
+        if (promo && navigator.vibrate) navigator.vibrate(40);
+        if (onImpact) onImpact();
+      },
+    },
+  );
 }
 
 // ---------------------------------------------------------------- daily
@@ -294,15 +348,15 @@ function recordDaily(res, text) {
   store.save();
   $('sb-score').textContent = before + points;
   game.phase = 'reveal';
-  const promo = renderClimb(before + points, before);
+  const promo = promoFor(before, before + points);
   if (matched) {
-    showReveal({ tier, title: res.answer.name, extra: `+${points}`, promo });
+    showReveal({ tier, title: res.answer.name, extra: `+${points}`, promo, kind: 'goal', onImpact: () => renderClimb(before + points, before) });
   } else if (res.status === 'unverified') {
-    showReveal({ tier, sub: `“${text.trim()}” isn’t on our list yet — logged for review`, extra: '+0' });
+    showReveal({ tier, sub: `“${text.trim()}” isn’t on our list yet — logged for review`, extra: '+0', kind: 'var' });
   } else {
     const label = res.status === 'timeout' ? (text.trim() ? 'Full time' : 'Time’s up') : res.status === 'pass' ? 'Passed' : 'Off target';
     const sub = res.status === 'miss' ? missText(prompt, res, text) : 'No score this time';
-    showReveal({ tier: null, title: label, sub, extra: '+0' });
+    showReveal({ tier: null, title: label, sub, extra: '+0', kind: res.status === 'miss' ? 'miss' : 'none' });
   }
   renderClock(0, DAILY_MS);
   revealTimer = setTimeout(advance, REVEAL_MS.daily + (promo ? 800 : 0));
@@ -554,18 +608,19 @@ function submitInfinite(text) {
   logAnswer('infinite', dateKey(), prompt, settled, text);
   if (settled.status === 'unverified') {
     run.results.push({ id: prompt.id, input: text.trim(), name: null, tier: UNVERIFIED.name, points: 0 });
-    showReveal({ tier: UNVERIFIED.name, sub: `“${text.trim()}” isn’t on our list yet — logged for review`, extra: 'No time added' });
+    showReveal({ tier: UNVERIFIED.name, sub: `“${text.trim()}” isn’t on our list yet — logged for review`, extra: 'No time added', kind: 'var' });
   } else if (res.status === 'match') {
     const t = tierOf(res.answer.tier);
     run.score += t.points;
     run.remaining += t.bonus * 1000;
     run.used[prompt.id] = [...used, res.index];
     run.results.push({ id: prompt.id, input: text.trim(), name: res.answer.name, tier: t.name, points: t.points });
-    const promo = renderClimb(run.score, run.score - t.points);
-    showReveal({ tier: t.name, title: res.answer.name, extra: `+${t.points} · +${t.bonus}s`, promo });
+    const before = run.score - t.points;
+    const after = run.score;
+    showReveal({ tier: t.name, title: res.answer.name, extra: `+${t.points} · +${t.bonus}s`, promo: promoFor(before, after), kind: 'goal', onImpact: () => renderClimb(after, before) });
   } else {
     run.results.push({ id: prompt.id, input: text.trim(), name: null, tier: null, points: 0 });
-    showReveal({ tier: null, title: 'Off target', sub: missText(prompt, settled, text), extra: 'No time added' });
+    showReveal({ tier: null, title: 'Off target', sub: missText(prompt, settled, text), extra: 'No time added', kind: 'miss' });
   }
   run.pos += 1;
   store.save();
@@ -616,8 +671,10 @@ function finishInfinite() {
 // ---------------------------------------------------------------- shared game input
 
 function advance() {
-  clearTimeout(revealTimer);
   if (!game || game.phase !== 'reveal') return;
+  // First tap during the shot skips to the result; the next moves on.
+  if (!game.revealReady && skipShot) { skipShot(); return; }
+  clearTimeout(revealTimer);
   if (game.mode === 'daily') nextDailyPrompt();
   else showInfinitePrompt();
 }
