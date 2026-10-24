@@ -53,21 +53,65 @@ export function seededShuffle(items, seed) {
   return out;
 }
 
-function pickDay(ids, lastUsed, day) {
+// Variety rules: at most MAX_PER_GROUP prompts per category, and per answer
+// type for anything but people (so no three club prompts in a day), and no
+// two prompts from the same group back to back.
+export const MAX_PER_GROUP = 2;
+
+function groupsOf(meta) {
+  const g = [`c:${meta.category || ''}`];
+  if (meta.answerType && meta.answerType !== 'person') g.push(`t:${meta.answerType}`);
+  return g;
+}
+
+function pickDay(ids, metaById, lastUsed, day) {
   const rank = new Map(ids.map((id) => [id, hash32(`${day}|${id}`)]));
   const byRank = (a, b) => rank.get(a) - rank.get(b) || (a < b ? -1 : 1);
-  const fresh = ids.filter((id) => !lastUsed.has(id) || day - lastUsed.get(id) > REPEAT_GAP);
-  let chosen;
-  if (fresh.length >= PER_DAY) {
-    chosen = fresh.sort(byRank).slice(0, PER_DAY);
-  } else {
-    // Bank too small to honour the gap: top up with the least recently used.
-    const freshSet = new Set(fresh);
-    const stale = ids.filter((id) => !freshSet.has(id))
-      .sort((a, b) => lastUsed.get(a) - lastUsed.get(b) || byRank(a, b));
-    chosen = [...fresh, ...stale.slice(0, PER_DAY - fresh.length)];
+  const isFresh = (id) => !lastUsed.has(id) || day - lastUsed.get(id) > REPEAT_GAP;
+  // Preference order: prompts outside the 30-day window by today's rank, then
+  // (only when the bank is too small) the least recently used.
+  const fresh = ids.filter(isFresh).sort(byRank);
+  const stale = ids.filter((id) => !isFresh(id)).sort((a, b) => lastUsed.get(a) - lastUsed.get(b) || byRank(a, b));
+  const candidates = [...fresh, ...stale];
+
+  const chosen = [];
+  const counts = new Map();
+  const fits = (id) => groupsOf(metaById.get(id)).every((g) => (counts.get(g) || 0) < MAX_PER_GROUP);
+  for (const id of candidates) {
+    if (chosen.length === PER_DAY) break;
+    if (!fits(id)) continue;
+    chosen.push(id);
+    for (const g of groupsOf(metaById.get(id))) counts.set(g, (counts.get(g) || 0) + 1);
   }
-  return seededShuffle(chosen.sort(byRank), hash32(`order|${day}`));
+  // Bank too narrow to satisfy the caps: fill in preference order regardless.
+  for (const id of candidates) {
+    if (chosen.length === PER_DAY) break;
+    if (!chosen.includes(id)) chosen.push(id);
+  }
+  return spreadOut(seededShuffle(chosen.sort(byRank), hash32(`order|${day}`)), metaById);
+}
+
+/**
+ * Reorder so neighbouring prompts don't share a category or (non-person) answer
+ * type. Depth-first in the seeded order, so the result stays deterministic; if
+ * no clean order exists, the seeded order is kept.
+ */
+function spreadOut(order, metaById) {
+  const groups = new Map(order.map((id) => [id, groupsOf(metaById.get(id))]));
+  const clash = (a, b) => groups.get(b).some((g) => groups.get(a).includes(g));
+  const out = [];
+  const used = new Set();
+  const place = () => {
+    if (out.length === order.length) return true;
+    for (const id of order) {
+      if (used.has(id) || (out.length && clash(out[out.length - 1], id))) continue;
+      out.push(id); used.add(id);
+      if (place()) return true;
+      out.pop(); used.delete(id);
+    }
+    return false;
+  };
+  return place() ? out : [...order];
 }
 
 const cache = new Map();
@@ -78,17 +122,19 @@ const cache = new Map();
  * doesn't matter. Dates before EPOCH get a plain seeded pick.
  */
 export function promptsForDate(prompts, key) {
-  const ids = [...new Set(prompts.map((p) => p.id))].sort();
+  const metaById = new Map();
+  for (const p of prompts) if (!metaById.has(p.id)) metaById.set(p.id, { category: p.category, answerType: p.answerType });
+  const ids = [...metaById.keys()].sort();
   const target = dayIndex(key);
   const start = dayIndex(EPOCH);
-  if (ids.length <= PER_DAY) return seededShuffle(ids, hash32(`order|${target}`));
-  if (target < start) return pickDay(ids, new Map(), target);
+  if (ids.length <= PER_DAY) return spreadOut(seededShuffle(ids, hash32(`order|${target}`)), metaById);
+  if (target < start) return pickDay(ids, metaById, new Map(), target);
 
-  const cacheKey = ids.join(',');
+  const cacheKey = ids.map((id) => `${id}:${groupsOf(metaById.get(id)).join('/')}`).join(',');
   let entry = cache.get(cacheKey);
   if (!entry) { entry = { day: start - 1, lastUsed: new Map(), picks: new Map() }; cache.set(cacheKey, entry); }
   for (let day = entry.day + 1; day <= target; day++) {
-    const pick = pickDay(ids, entry.lastUsed, day);
+    const pick = pickDay(ids, metaById, entry.lastUsed, day);
     for (const id of pick) entry.lastUsed.set(id, day);
     entry.picks.set(day, pick);
     entry.day = day;

@@ -1,6 +1,7 @@
-import { buildIndex, matchAnswer } from './match.js';
+import { buildIndex, matchAnswer, compact } from './match.js';
 import { dateKey, dayIndex, puzzleNumber, promptsForDate } from './daily.js';
 import * as store from './storage.js';
+import { ANSWER_LOG_URL } from './config.js';
 
 // ---------------------------------------------------------------- constants
 
@@ -14,6 +15,7 @@ export const TIERS = [
 ];
 const TIER = Object.fromEntries(TIERS.map((t) => [t.name, t]));
 const MISS = { name: 'Miss', points: 0, bonus: 0, emoji: '⬛', cls: 't-miss' };
+const UNVERIFIED = { name: 'Not verified', points: 0, bonus: 0, emoji: '❔', cls: 't-unverified' };
 
 const DAILY_MS = 25_000;
 const INFINITE_MS = 45_000;
@@ -24,7 +26,7 @@ const REVEAL_MS = { daily: 2200, infinite: 1400 };
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const tierOf = (name) => TIER[name] || MISS;
+const tierOf = (name) => TIER[name] || (name === UNVERIFIED.name ? UNVERIFIED : MISS);
 
 let bank = [];
 const byId = new Map();
@@ -34,6 +36,29 @@ const indexFor = (prompt) => {
   return indexes.get(prompt.id);
 };
 const hiddenGem = (prompt) => prompt.answers.find((a) => a.tier === 'Hidden Gem');
+
+// Open prompts can't list every correct answer, so an unknown answer there is
+// "not verified" (0 points, logged for review) rather than marked wrong.
+function settle(prompt, res, text) {
+  if (res.status === 'miss' && !prompt.closedSet && compact(text).length >= 3) return { status: 'unverified' };
+  return res;
+}
+
+/** Keep unverified answers for review and, if configured, send every answer to the log. */
+function logAnswer(mode, date, prompt, res, text) {
+  const entry = {
+    date, mode, promptId: prompt.id, input: String(text || '').trim().slice(0, 80),
+    matched: res.status === 'match' ? res.answer.name : '', status: res.status,
+  };
+  if (res.status === 'unverified') store.update((s) => { s.pending = [...(s.pending || []), entry].slice(-300); });
+  if (!ANSWER_LOG_URL) return;
+  try {
+    fetch(ANSWER_LOG_URL, {
+      method: 'POST', mode: 'no-cors', keepalive: true,
+      headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify(entry),
+    }).catch(() => {});
+  } catch { /* logging is best-effort */ }
+}
 
 function formatAsOf(iso) {
   if (!iso) return '';
@@ -125,7 +150,7 @@ function showReveal({ tier, title, sub, extra }) {
   const badge = $('reveal-tier');
   badge.className = `tier-badge big ${t.cls}`;
   badge.textContent = t === MISS ? (title || 'Miss') : t.name;
-  $('reveal-name').textContent = t === MISS ? (sub || '') : title;
+  $('reveal-name').textContent = t === MISS || t === UNVERIFIED ? (sub || '') : title;
   $('reveal-points').textContent = extra || '';
   $('reveal').hidden = false;
   $('prompt-card').classList.add('revealed');
@@ -197,7 +222,7 @@ function submitDaily(text) {
     shake();
     return;
   }
-  recordDaily(res, text);
+  recordDaily(settle(game.prompt, res, text), text);
 }
 
 function recordDaily(res, text) {
@@ -205,8 +230,9 @@ function recordDaily(res, text) {
   const d = store.load().daily;
   const prompt = game.prompt;
   const matched = res.status === 'match';
-  const tier = matched ? res.answer.tier : null;
+  const tier = matched ? res.answer.tier : res.status === 'unverified' ? UNVERIFIED.name : null;
   const points = matched ? tierOf(tier).points : 0;
+  logAnswer('daily', d.date, prompt, res, text);
   d.results.push({ id: prompt.id, input: text.trim(), name: matched ? res.answer.name : null, tier, points });
   d.index += 1;
   d.deadline = null;
@@ -215,6 +241,8 @@ function recordDaily(res, text) {
   game.phase = 'reveal';
   if (matched) {
     showReveal({ tier, title: res.answer.name, extra: `+${points}` });
+  } else if (res.status === 'unverified') {
+    showReveal({ tier, sub: `“${text.trim()}” isn’t on our list yet — logged for review`, extra: '+0' });
   } else {
     const label = res.status === 'timeout' ? (text.trim() ? 'Full time' : 'Time’s up') : res.status === 'pass' ? 'Passed' : 'Off target';
     const sub = res.status === 'miss' ? `“${text.trim()}” isn’t in our bank` : 'No score this time';
@@ -266,6 +294,8 @@ function resultRows(results) {
     const gem = hiddenGem(prompt);
     const yours = r.name
       ? `<span class="tier-badge ${t.cls}">${esc(t.name)}</span> ${esc(r.name)} <b>+${r.points}</b>`
+      : t === UNVERIFIED
+      ? `<span class="tier-badge t-unverified">Not verified</span> ${esc(r.input)} <i>· logged for review</i>`
       : `<span class="tier-badge t-miss">Miss</span> ${r.input ? `<s>${esc(r.input)}</s>` : '<i>no answer</i>'}`;
     return `<li>
       <p class="rl-prompt">${esc(prompt.prompt)}</p>
@@ -393,12 +423,17 @@ function submitInfinite(text) {
     shake();
     return;
   }
+  const settled = settle(prompt, res, text);
   // Settle the clock up to this instant, then pause it for the reveal.
   tickInfinite();
   if (!game || game.phase !== 'answer') return;
   clearInterval(ticker);
   game.phase = 'reveal';
-  if (res.status === 'match') {
+  logAnswer('infinite', dateKey(), prompt, settled, text);
+  if (settled.status === 'unverified') {
+    run.results.push({ id: prompt.id, input: text.trim(), name: null, tier: UNVERIFIED.name, points: 0 });
+    showReveal({ tier: UNVERIFIED.name, sub: `“${text.trim()}” isn’t on our list yet — logged for review`, extra: 'No time added' });
+  } else if (res.status === 'match') {
     const t = tierOf(res.answer.tier);
     run.score += t.points;
     run.remaining += t.bonus * 1000;
@@ -531,8 +566,13 @@ function openStats() {
       <div><dt>Max streak</dt><dd>${s.maxStreak}</dd></div>
       <div><dt>Infinite best</dt><dd>${state.infiniteBest}</dd></div>
     </dl>
+    ${(state.pending || []).length ? `<p class="small muted">${state.pending.length} unverified answer${state.pending.length === 1 ? '' : 's'} saved on this device. <button class="link-btn" id="btn-copy-pending" type="button">Copy for review</button></p>` : ''}
     ${recent.length ? `<h3 class="section-title">Recent dailies</h3>
     <ul class="recent">${recent.map(([day, score]) => `<li><span>#${puzzleNumber(day)}</span><span class="bar"><i style="width:${(score / MAX_DAILY) * 100}%"></i></span><b>${score}</b></li>`).join('')}</ul>` : '<p class="muted">Play today’s Deep Cut to start your stats.</p>'}`;
+  const copy = $('btn-copy-pending');
+  if (copy) {
+    copy.addEventListener('click', () => share(state.pending.map((e) => `${e.promptId}\t${e.input}`).join('\n')));
+  }
   $('modal-stats').showModal();
 }
 
@@ -599,6 +639,7 @@ async function boot() {
     return;
   }
   for (const p of bank) byId.set(p.id, p);
+  $('help-logging').hidden = !ANSWER_LOG_URL;
 
   const state = store.load();
   const d = state.daily;

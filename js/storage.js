@@ -18,6 +18,7 @@ const DEFAULTS = () => ({
   infinite: null,        // in-progress Infinite run
   infiniteBest: 0,
   infinitePlayed: 0,
+  pending: [],          // unverified answers kept for review: { date, mode, promptId, input }
 });
 
 let memory = null;

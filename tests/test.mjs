@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
 import { normalize, compact, levenshtein, buildIndex, matchAnswer } from '../js/match.js';
-import { promptsForDate, dayIndex, puzzleNumber, EPOCH, PER_DAY, REPEAT_GAP } from '../js/daily.js';
+import { promptsForDate, dayIndex, puzzleNumber, EPOCH, PER_DAY, REPEAT_GAP, MAX_PER_GROUP } from '../js/daily.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 let failures = 0;
@@ -33,6 +33,8 @@ for (const p of prompts) {
   test(`${p.id}`, () => {
     for (const field of ['id', 'prompt', 'category', 'asOf', 'answerType']) assert.ok(p[field], `missing ${field}`);
     assert.match(p.asOf, /^\d{4}-\d{2}-\d{2}$/, 'asOf must be YYYY-MM-DD');
+    // A year or range in the wording keeps the prompt true after the season moves on.
+    assert.match(p.prompt, /\b(18|19|20)\d{2}\b/, 'prompt wording needs a year or date range, e.g. (1992/93–2024/25)');
     assert.ok(TYPES.includes(p.answerType), `answerType must be one of ${TYPES.join(', ')}`);
     assert.ok(Array.isArray(p.answers) && p.answers.length, 'no answers');
     const bad = p.answers.filter((a) => !TIERS.includes(a.tier));
@@ -178,6 +180,23 @@ test('small bank: spreads prompts as evenly as possible', () => {
       const prev = seen.get(id);
       if (prev != null) assert.ok(dayIndex(key) - prev >= Math.floor(prompts.length / PER_DAY), `${id} back after ${dayIndex(key) - prev} days`);
       seen.set(id, dayIndex(key));
+    }
+  }
+});
+
+test(`variety: ≤${MAX_PER_GROUP} per category, ≤${MAX_PER_GROUP} club/stadium/country prompts, no back-to-back repeats`, () => {
+  const meta = new Map(prompts.map((p) => [p.id, p]));
+  for (let d = 0; d < 365; d++) {
+    const key = addDays(EPOCH, d);
+    const day = promptsForDate(prompts, key).map((id) => meta.get(id));
+    const count = (f) => day.reduce((m, p) => m.set(f(p), (m.get(f(p)) || 0) + 1), new Map());
+    for (const [cat, n] of count((p) => p.category)) assert.ok(n <= MAX_PER_GROUP, `${key}: ${n} × ${cat}`);
+    for (const [type, n] of count((p) => p.answerType)) if (type !== 'person') assert.ok(n <= MAX_PER_GROUP, `${key}: ${n} × ${type}`);
+    for (let i = 1; i < day.length; i++) {
+      const a = day[i - 1];
+      const b = day[i];
+      assert.ok(a.category !== b.category, `${key}: ${a.category} twice in a row`);
+      assert.ok(a.answerType === 'person' || a.answerType !== b.answerType, `${key}: two ${a.answerType} prompts in a row`);
     }
   }
 });
