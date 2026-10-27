@@ -80,7 +80,7 @@ test('a typo in any answer never suggests a different answer', () => {
 });
 
 test('real names of the wrong kind are wrong, not suggestions or "not verified"', () => {
-  const known = buildKnown(prompts);
+  const known = buildKnown(prompts, data.cities || []);
   const ix = (id) => buildIndex(prompts.find((p) => p.id === id), known);
   const check = (id, text, expected) => {
     const r = matchAnswer(ix(id), text);
@@ -96,9 +96,14 @@ test('real names of the wrong kind are wrong, not suggestions or "not verified"'
   check('ucl-english-winners', 'Wembley', 'wrong:a stadium');
   check('ucl-english-winners', 'Brazil', 'wrong:a country');
   check('wc-winning-squads', 'Villa', 'match:David Villa');            // a surname that's also a club alias
+  check('euro-2024-stadiums', 'Düsseldorf', 'wrong:a city');           // a city isn't its stadium
+  check('euro-2024-stadiums', 'Dusseldorf Arena', 'match:Merkur Spiel-Arena');
+  check('european-final-venues', 'Istanbul', 'wrong:a city');
+  check('wc-2026-stadiums', 'Estadio Monterrey', 'match:Estadio BBVA'); // filler kept when stripping leaves a city
+  check('pl-clubs', 'Stake', 'wrong:a brand');                        // a sponsor, not "Did you mean Stoke?"
 });
 test('no answer\'s spelling help comes from a short alias', () => {
-  const known = buildKnown(prompts);
+  const known = buildKnown(prompts, data.cities || []);
   for (const p of prompts) {
     const index = buildIndex(p, known);
     for (const other of prompts) {

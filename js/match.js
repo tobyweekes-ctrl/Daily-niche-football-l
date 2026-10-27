@@ -92,8 +92,15 @@ export function maxTypos(length) {
  * a prompt can tell "a real thing of the wrong kind" (a club typed for a stadium
  * prompt, "Wembley" for a player) from an answer it simply doesn't list yet.
  */
-export function buildKnown(prompts) {
+export function buildKnown(prompts, cities = []) {
   const known = new Map();
+  // Cities are never answers, but naming one ("Düsseldorf") for a stadium is a
+  // real thing of the wrong kind, not a stadium.
+  for (const c of cities) {
+    const k = compact(c);
+    if (!known.has(k)) known.set(k, new Set());
+    known.get(k).add('city');
+  }
   for (const p of prompts) {
     for (const a of p.answers) {
       for (const s of [a.name, ...(a.aliases ?? [])]) {
@@ -125,9 +132,15 @@ export function buildIndex(prompt, known = new Map()) {
     levels[level].get(key).add(idx);
     keysByAnswer[idx].add(key);
   };
+  // Filler words are optional, but not when dropping them leaves just a city:
+  // "Cologne Stadium" must not answer to plain "Cologne".
+  const keyOf = (s) => {
+    const k = compact(s, type);
+    return type === 'stadium' && known.get(k)?.has('city') ? compact(s) : k;
+  };
   prompt.answers.forEach((answer, idx) => {
-    add('name', compact(answer.name, type), idx);
-    for (const alias of answer.aliases ?? []) add('alias', compact(alias, type), idx);
+    add('name', keyOf(answer.name), idx);
+    for (const alias of answer.aliases ?? []) add('alias', keyOf(alias), idx);
     // "surname": "Park" overrides the automatic last-word guess; false disables it.
     if (isPerson && answer.surname !== false) {
       const keys = typeof answer.surname === 'string' ? [compact(answer.surname)] : surnameKeys(answer.name);
@@ -137,14 +150,14 @@ export function buildIndex(prompt, known = new Map()) {
   return { prompt, type, levels, keysByAnswer, fullByAnswer, fullKeys, known };
 }
 
-const KIND_LABEL = { club: 'a club', stadium: 'a stadium', country: 'a country', person: 'a person' };
+const KIND_LABEL = { club: 'a club', stadium: 'a stadium', country: 'a country', person: 'a person', city: 'a city', other: 'a brand' };
 
 /** If the text names something of another kind (and isn't one of this prompt's own spellings), say what it is. */
 function wrongKind(index, full) {
   if (index.fullKeys.has(full)) return null;
   const kinds = index.known.get(full);
   if (!kinds || kinds.has(index.type)) return null;
-  const kind = ['club', 'stadium', 'country', 'person'].find((k) => kinds.has(k));
+  const kind = ['club', 'stadium', 'country', 'person', 'city', 'other'].find((k) => kinds.has(k));
   return kind ? KIND_LABEL[kind] : null;
 }
 
@@ -181,7 +194,8 @@ export function matchAnswer(index, input, used = new Set()) {
   }
 
   for (const level of ['name', 'alias', 'surname']) {
-    const hit = index.levels[level].get(key);
+    // The full spelling too, for names whose filler words are kept ("Estadio Monterrey").
+    const hit = index.levels[level].get(key) || index.levels[level].get(full);
     if (hit) return resolve(hit, level);
   }
 

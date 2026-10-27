@@ -2,7 +2,7 @@
 
 A daily football trivia game where **obvious answers score low and rare-but-correct answers score high**.
 
-- **Daily:** everyone gets the same 7 prompts each day, 25 seconds and one answer per prompt, max 700 points. Every point rolls a ball up the football pyramid, from Sunday League to the Ballon d'Or, with a promotion banner each time you go up a level. At full time you see the level you reached, how your score compares with everyone else's, each prompt's Hidden Gem, and a spoiler-free emoji grid to share.
+- **Daily:** everyone gets the same 7 prompts each day, with 25 seconds per prompt, max 700 points. Wrong answers aren't submitted: you're told why and keep guessing until your first correct answer locks in, or the whistle goes. Every point rolls a ball up the football pyramid, from Sunday League to the Ballon d'Or, with a promotion banner each time you go up a level. At full time you see the level you reached, how your score compares with everyone else's, each prompt's Hidden Gem, and a spoiler-free emoji grid to share.
 - **Infinite:** endless prompts on a single 45-second clock. Correct answers add time (+5s for a Tap-in, up to +15s for a Hidden Gem). You can't use the same answer twice in a run.
 
 It's plain HTML, CSS and JavaScript (ES modules). There's no build step, no backend and no accounts.
@@ -110,10 +110,12 @@ This fails if a prompt is missing a field, has an invalid tier, doesn't have exa
    - **Only when it's clear:** a suggestion appears only when one answer is clearly closest. If two are close ("Nevlle": Gary or Phil?), you're asked to be more specific instead.
    - **On the buzzer:** if the clock runs out with a clear misspelling in the box, it counts.
    - **Tested:** a test drops a letter from every answer in the bank and checks that it never suggests a different answer.
-   - **Optional words:** for stadiums and clubs, filler words are optional: "Liberty" = "Liberty Stadium", "Brugge" = "Club Brugge". Final venues also accept their city ("Istanbul"), and asks for more detail where a city has two ("Munich").
-5. **Right name, wrong kind of thing:** the game knows every club, stadium, country and person in the whole bank. A club typed for a stadium prompt ("Arsenal" for Highbury), a stadium typed for a player ("Wembley"), or a country typed for a club is marked wrong, with a reason such as "“Arsenal” is a club, not a stadium". It's never suggested, and never scored "Not verified". A stadium's real name still counts even when it contains a club name ("Arsenal Stadium" = Highbury). Avoid aliases that are just "[club] Stadium" unless the ground really was called that.
-6. In Infinite mode, an answer you've already given for that prompt is blocked with a message, and doesn't cost you a go.
-7. If nothing matches: on a `closedSet` prompt it's a miss. On an open prompt, anything of 3+ letters is **Not verified**. It scores 0 (giving points would let anyone type nonsense), shows as ❔ in the share grid, and is saved for review. You can find saved answers under **Stats → Copy for review**, or in the answer log if that's switched on.
+   - **Optional words:** for stadiums and clubs, filler words are optional: "Liberty" = "Liberty Stadium", "Brugge" = "Club Brugge".
+   - **Cities are never stadiums.** `questions.json` has a top-level `cities` list. Typing one ("Düsseldorf") on a stadium prompt is "a city, not a stadium". If dropping "Stadium" from a name would leave only a city ("Cologne Stadium"), the full name is required. Add a city to that list whenever you add a stadium named after one.
+5. **Wrong answers aren't submitted.** You're told why ("isn't in our bank", "is a city, not a stadium") and can try again while the clock runs. Your first correct answer is the one that scores. Every wrong try is logged, and the results screen notes how many you needed. If time runs out after an answer scored "Not verified", that's the result for the prompt instead of a blank.
+6. **Right name, wrong kind of thing:** the game knows every club, stadium, country and person in the whole bank. A club typed for a stadium prompt ("Arsenal" for Highbury), a stadium typed for a player ("Wembley"), or a country typed for a club is marked wrong, with a reason such as "“Arsenal” is a club, not a stadium". It's never suggested, and never scored "Not verified". A stadium's real name still counts even when it contains a club name ("Arsenal Stadium" = Highbury). Avoid aliases that are just "[club] Stadium" unless the ground really was called that.
+7. In Infinite mode, an answer you've already given for that prompt is blocked with a message, and doesn't cost you a go.
+8. If nothing matches: on a `closedSet` prompt it's a miss. On an open prompt, anything of 3+ letters is **Not verified**. It scores 0 (giving points would let anyone type nonsense), shows as ❔ in the share grid, and is saved for review. You can find saved answers under **Stats → Copy for review**, or in the answer log if that's switched on.
 
 Whatever is in the box when the daily clock hits zero is submitted "on the buzzer". It counts only if it's a clean match.
 
@@ -192,7 +194,7 @@ If storage is blocked (some private-browsing modes), the game still runs but for
 
 ## A note on the starter bank
 
-There are 57 prompts (about 2,200 answers), and all are flagged `"needs fact-check"`. Most were written from memory. The 2025/26 and 2026 updates were checked against news reports in October 2026:
+There are 81 prompts (about 2,700 answers), and all are flagged `"needs fact-check"`. Most were written from memory. The 2025/26 and 2026 updates were checked against news reports in October 2026:
 - **2025/26 season:** Arsenal champions, Haaland Golden Boot, Coventry, Ipswich and Hull promoted, Bruno Fernandes PFA.
 - **Cups:** Man City won the FA Cup and the League Cup.
 - **European finals:** PSG won the Champions League (Havertz and Dembélé scored), Aston Villa the Europa League, and Crystal Palace the Conference League.
@@ -205,7 +207,11 @@ Not yet updated, because sources conflicted or the event hadn't happened yet:
 - **The 2026 Ballon d'Or:** the ceremony is on 26 October 2026.
 - **The 2026 FA Cup-winning manager.**
 
+The prompts span the Premier League and EFL, Scottish, European, South American, MLS and international football, women's football, badges and kits, shirt sponsors, nicknames and derbies, famous games, records, transfers and managers.
+
 The ones most likely to need correcting:
+- **Badges and kits (`bird-crests`, `yellow-home-kits`, `red-white-stripes`):** crests and kits change, so these are dated 2025/26.
+- **`kit-manufacturers` and `pl-shirt-sponsors`:** long, open lists, where the obscure entries are the ones to check.
 - **`wc-2026-teams`:** I couldn't confirm the two intercontinental play-off winners. DR Congo and Iraq are listed, and the prompt is left open, so a correct team I've missed scores "Not verified" rather than wrong.
 - **`saudi-pro-league-signings`:** transfer details.
 

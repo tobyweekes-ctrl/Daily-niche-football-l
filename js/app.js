@@ -47,12 +47,30 @@ function settle(prompt, res, text) {
   return res;
 }
 
-const KIND_OF_PROMPT = { club: 'a club', stadium: 'a stadium', country: 'a country', person: 'a person' };
+const KIND_OF_PROMPT = { club: 'a club', stadium: 'a stadium', country: 'a country', person: 'a person', other: 'an answer here' };
 /** Why a miss missed, in words. */
 function missText(prompt, res, text) {
   const t = `“${text.trim()}”`;
   if (res.wrongKind) return `${t} is ${res.wrongKind}, not ${KIND_OF_PROMPT[prompt.answerType] || 'an answer here'}`;
   return `${t} isn’t in our bank`;
+}
+
+/**
+ * A wrong answer isn't submitted: say why, log it, and let them go again while
+ * the clock runs. An unverified answer is remembered so that, if time runs out,
+ * the result is "Not verified" rather than a blank.
+ */
+function wrongGuess(prompt, res, text, mode, date, holder) {
+  logAnswer(mode, date, prompt, res, text);
+  holder.tries = (holder.tries || 0) + 1;
+  if (res.status === 'unverified') holder.unverified = text.trim();
+  store.save();
+  const why = res.status === 'unverified'
+    ? `“${text.trim()}” isn’t on our list yet — logged for review. Try another!`
+    : `${missText(prompt, res, text)} — try again.`;
+  setFeedback(why, 'warn');
+  shake();
+  $('answer').select();
 }
 
 /** Keep unverified answers for review and, if configured, send every answer to the log. */
@@ -226,7 +244,7 @@ const SHOT_LINE = { miss: 'Over the bar!', var: 'VAR check: not on our list yet'
  * 'miss' (wrong), 'var' (not verified) or 'none' (passed / out of time).
  * The text lands when the ball does; `onImpact` runs at the same moment.
  */
-function showReveal({ tier, title, sub, extra, promo = '', kind = 'none', onImpact }) {
+function showReveal({ tier, title, sub, extra, promo = '', kind = 'none', onImpact, line }) {
   clearSuggestion();
   const token = ++revealToken;
   const t = tierOf(tier);
@@ -235,7 +253,7 @@ function showReveal({ tier, title, sub, extra, promo = '', kind = 'none', onImpa
   badge.textContent = t === MISS ? (title || 'Miss') : t.name;
   $('reveal-name').textContent = t === MISS || t === UNVERIFIED ? (sub || '') : title;
   const shot = SHOTS[t.name];
-  $('reveal-line').textContent = kind === 'goal' && shot ? shot.line : SHOT_LINE[kind] || '';
+  $('reveal-line').textContent = line ?? (kind === 'goal' && shot ? shot.line : SHOT_LINE[kind] || '');
   $('reveal-points').textContent = '';
   $('reveal-promo').textContent = promo ? `⬆ ${promo}` : '';
   $('reveal-promo').hidden = !promo;
@@ -321,6 +339,7 @@ function tickDaily() {
     const res = matchAnswer(indexFor(game.prompt), $('answer').value);
     if (res.status === 'match') recordDaily(res, $('answer').value);
     else if (res.status === 'suggest') recordDaily({ ...res, status: 'match' }, $('answer').value);
+    else if (d.unverified) recordDaily({ status: 'unverified' }, d.unverified);
     else recordDaily({ status: 'timeout' }, $('answer').value);
   }
 }
@@ -330,7 +349,9 @@ function submitDaily(text) {
   if (res.status === 'empty') { shake(); return; }
   if (res.status === 'ambiguous') { ambiguousFeedback(text); return; }
   if (res.status === 'suggest') { offerSuggestion(res, text); return; }
-  recordDaily(settle(game.prompt, res, text), text);
+  const settled = settle(game.prompt, res, text);
+  if (settled.status === 'match') recordDaily(settled, text);
+  else { const d = store.load().daily; wrongGuess(game.prompt, settled, text, 'daily', d.date, d); }
 }
 
 function recordDaily(res, text) {
@@ -340,9 +361,11 @@ function recordDaily(res, text) {
   const matched = res.status === 'match';
   const tier = matched ? res.answer.tier : res.status === 'unverified' ? UNVERIFIED.name : null;
   const points = matched ? tierOf(tier).points : 0;
-  logAnswer('daily', d.date, prompt, res, text);
+  if (res.status !== 'unverified') logAnswer('daily', d.date, prompt, res, text); // wrong tries were logged as they happened
   const before = d.results.reduce((s, r) => s + r.points, 0);
-  d.results.push({ id: prompt.id, input: text.trim(), name: matched ? res.answer.name : null, tier, points });
+  d.results.push({ id: prompt.id, input: text.trim(), name: matched ? res.answer.name : null, tier, points, tries: d.tries || 0 });
+  d.tries = 0;
+  d.unverified = null;
   d.index += 1;
   d.deadline = null;
   store.save();
@@ -354,9 +377,8 @@ function recordDaily(res, text) {
   } else if (res.status === 'unverified') {
     showReveal({ tier, sub: `“${text.trim()}” isn’t on our list yet — logged for review`, extra: '+0', kind: 'var' });
   } else {
-    const label = res.status === 'timeout' ? (text.trim() ? 'Full time' : 'Time’s up') : res.status === 'pass' ? 'Passed' : 'Off target';
-    const sub = res.status === 'miss' ? missText(prompt, res, text) : 'No score this time';
-    showReveal({ tier: null, title: label, sub, extra: '+0', kind: res.status === 'miss' ? 'miss' : 'none' });
+    const label = res.status === 'pass' ? 'Passed' : 'Time’s up';
+    showReveal({ tier: null, title: label, sub: 'No score this time', extra: '+0', kind: res.status === 'pass' ? 'none' : 'miss', line: res.status === 'pass' ? '' : 'The whistle went before the shot' });
   }
   renderClock(0, DAILY_MS);
   revealTimer = setTimeout(advance, REVEAL_MS.daily + (promo ? 800 : 0));
@@ -427,9 +449,10 @@ function resultRows(results) {
       : t === UNVERIFIED
       ? `<span class="tier-badge t-unverified">Not verified</span> ${esc(r.input)} <i>· logged for review</i>`
       : `<span class="tier-badge t-miss">Miss</span> ${r.input ? `<s>${esc(r.input)}</s>` : '<i>no answer</i>'}`;
+    const tries = r.tries ? ` <small class="rl-tries">· ${r.tries} wrong ${r.tries === 1 ? 'try' : 'tries'}</small>` : '';
     return `<li>
       <p class="rl-prompt">${esc(prompt.prompt)}</p>
-      <p class="rl-yours">${yours}</p>
+      <p class="rl-yours">${yours}${tries}</p>
       ${gem ? `<p class="rl-gem"><span aria-hidden="true">💎</span> Hidden Gem: <b>${esc(gem.name)}</b></p>` : ''}
     </li>`;
   }).join('');
@@ -600,28 +623,24 @@ function submitInfinite(text) {
     return;
   }
   const settled = settle(prompt, res, text);
+  // Wrong: not submitted, the clock keeps running, go again.
+  if (settled.status !== 'match') { wrongGuess(prompt, settled, text, 'infinite', dateKey(), run); return; }
   // Settle the clock up to this instant, then pause it for the reveal.
   tickInfinite();
   if (!game || game.phase !== 'answer') return;
   clearInterval(ticker);
   game.phase = 'reveal';
   logAnswer('infinite', dateKey(), prompt, settled, text);
-  if (settled.status === 'unverified') {
-    run.results.push({ id: prompt.id, input: text.trim(), name: null, tier: UNVERIFIED.name, points: 0 });
-    showReveal({ tier: UNVERIFIED.name, sub: `“${text.trim()}” isn’t on our list yet — logged for review`, extra: 'No time added', kind: 'var' });
-  } else if (res.status === 'match') {
-    const t = tierOf(res.answer.tier);
-    run.score += t.points;
-    run.remaining += t.bonus * 1000;
-    run.used[prompt.id] = [...used, res.index];
-    run.results.push({ id: prompt.id, input: text.trim(), name: res.answer.name, tier: t.name, points: t.points });
-    const before = run.score - t.points;
-    const after = run.score;
-    showReveal({ tier: t.name, title: res.answer.name, extra: `+${t.points} · +${t.bonus}s`, promo: promoFor(before, after), kind: 'goal', onImpact: () => renderClimb(after, before) });
-  } else {
-    run.results.push({ id: prompt.id, input: text.trim(), name: null, tier: null, points: 0 });
-    showReveal({ tier: null, title: 'Off target', sub: missText(prompt, settled, text), extra: 'No time added', kind: 'miss' });
-  }
+  const t = tierOf(res.answer.tier);
+  run.score += t.points;
+  run.remaining += t.bonus * 1000;
+  run.used[prompt.id] = [...used, res.index];
+  run.results.push({ id: prompt.id, input: text.trim(), name: res.answer.name, tier: t.name, points: t.points, tries: run.tries || 0 });
+  run.tries = 0;
+  run.unverified = null;
+  const before = run.score - t.points;
+  const after = run.score;
+  showReveal({ tier: t.name, title: res.answer.name, extra: `+${t.points} · +${t.bonus}s`, promo: promoFor(before, after), kind: 'goal', onImpact: () => renderClimb(after, before) });
   run.pos += 1;
   store.save();
   $('sb-score').textContent = run.score;
@@ -633,7 +652,9 @@ function submitInfinite(text) {
 function passInfinite() {
   // Passing is free but the clock keeps running.
   const run = store.load().infinite;
-  run.results.push({ id: game.prompt.id, input: '', name: null, tier: null, points: 0 });
+  run.results.push({ id: game.prompt.id, input: run.unverified || '', name: null, tier: run.unverified ? UNVERIFIED.name : null, points: 0, tries: run.tries || 0 });
+  run.tries = 0;
+  run.unverified = null;
   run.pos += 1;
   store.save();
   clearInterval(ticker);
@@ -817,10 +838,11 @@ function wire() {
 
 async function boot() {
   wire();
+  let data;
   try {
     const res = await fetch('questions.json', { cache: 'no-cache' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
+    data = await res.json();
     bank = (Array.isArray(data) ? data : data.prompts || []).filter((p) => p && p.id && Array.isArray(p.answers) && p.answers.length);
     if (!bank.length) throw new Error('questions.json has no prompts');
   } catch (err) {
@@ -829,7 +851,7 @@ async function boot() {
     return;
   }
   for (const p of bank) byId.set(p.id, p);
-  known = buildKnown(bank);
+  known = buildKnown(bank, Array.isArray(data.cities) ? data.cities : []); // cities: never answers, see questions.json
   $('help-logging').hidden = !ANSWER_LOG_URL;
 
   const state = store.load();

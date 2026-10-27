@@ -511,3 +511,4 @@ body[data-screen="game"] .topbar { padding-top: calc(env(safe-area-inset-top) + 
   70% { opacity: 1; transform: translate(-50%, -50%) scale(1) rotate(-4deg); }
   100% { opacity: 0.0; transform: translate(-50%, -60%) scale(1) rotate(-4deg); }
 }
+.rl-tries { color: var(--muted); font-size: 12px; }
